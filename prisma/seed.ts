@@ -10,6 +10,12 @@ async function main() {
     update: {},
     create: { email: "seed@example.com" },
   });
+
+  await prisma.user.upsert({
+    where: { email: "admin@example.com" },
+    update: { role: "ADMIN" },
+    create: { email: "admin@example.com", role: "ADMIN" },
+  });
 }
 
 main()
