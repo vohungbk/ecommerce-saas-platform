@@ -1,8 +1,10 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiHeader, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { CourseStatus } from '@prisma/client';
 import { AdminGuard } from '../auth/admin.guard';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
+import { FindCoursesQueryDto } from './dto/find-courses-query.dto';
 
 @ApiTags('courses')
 @ApiHeader({
@@ -28,5 +30,55 @@ export class CoursesController {
   @ApiResponse({ status: 403, description: 'Caller is not an admin' })
   create(@Body() dto: CreateCourseDto) {
     return this.coursesService.create(dto);
+  }
+
+  @Get()
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'List courses (admin only)',
+    description:
+      'Returns a paginated list of courses, optionally filtered by status. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated list of courses',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              title: { type: 'string', example: 'Intro to TypeScript' },
+              description: {
+                type: 'string',
+                nullable: true,
+                example: 'A beginner course covering TypeScript fundamentals.',
+              },
+              status: { type: 'string', enum: Object.values(CourseStatus) },
+              createdAt: { type: 'string', format: 'date-time' },
+              updatedAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        },
+        meta: {
+          type: 'object',
+          properties: {
+            page: { type: 'integer', example: 1 },
+            limit: { type: 'integer', example: 10 },
+            total: { type: 'integer', example: 42 },
+            totalPages: { type: 'integer', example: 5 },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
+  findAll(@Query() query: FindCoursesQueryDto) {
+    return this.coursesService.findAll(query);
   }
 }

@@ -3,11 +3,27 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 
 describe('CoursesService', () => {
-  let prisma: { course: { create: jest.Mock } };
+  let prisma: {
+    course: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      count: jest.Mock;
+    };
+    $transaction: jest.Mock;
+  };
   let service: CoursesService;
 
   beforeEach(() => {
-    prisma = { course: { create: jest.fn().mockResolvedValue({}) } };
+    prisma = {
+      course: {
+        create: jest.fn().mockResolvedValue({}),
+        findMany: jest.fn(),
+        count: jest.fn(),
+      },
+      $transaction: jest.fn(
+        (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
+      ),
+    };
     service = new CoursesService(prisma as unknown as PrismaService);
   });
 
@@ -49,6 +65,96 @@ describe('CoursesService', () => {
         description: undefined,
         status: 'DRAFT',
       },
+    });
+  });
+
+  describe('findAll', () => {
+    it('applies default pagination (page=1, limit=10) when none is supplied', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      const result = await service.findAll({});
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: undefined,
+        skip: 0,
+        take: 10,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      expect(prisma.course.count).toHaveBeenCalledWith({ where: undefined });
+      expect(result.meta).toEqual({
+        page: 1,
+        limit: 10,
+        total: 0,
+        totalPages: 0,
+      });
+    });
+
+    it('applies custom pagination via skip/take', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAll({ page: 2, limit: 5 });
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: undefined,
+        skip: 5,
+        take: 5,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+    });
+
+    it('filters by status when provided', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAll({
+        status: 'PUBLISHED',
+      });
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: { status: 'PUBLISHED' },
+        skip: 0,
+        take: 10,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      expect(prisma.course.count).toHaveBeenCalledWith({
+        where: { status: 'PUBLISHED' },
+      });
+    });
+
+    it('does not include a status key in where when no filter is provided', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAll({});
+
+      const calls = prisma.course.findMany.mock.calls as Array<
+        [{ where?: unknown }]
+      >;
+      expect(calls[0][0].where).toBeUndefined();
+    });
+
+    it('returns an empty data array without error when there are no matches', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      const result = await service.findAll({});
+
+      expect(result.data).toEqual([]);
+      expect(result.meta.total).toBe(0);
+      expect(result.meta.totalPages).toBe(0);
+    });
+
+    it('computes totalPages by rounding up (total=11, limit=10 => totalPages=2)', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(11);
+
+      const result = await service.findAll({
+        limit: 10,
+      });
+
+      expect(result.meta.totalPages).toBe(2);
     });
   });
 });

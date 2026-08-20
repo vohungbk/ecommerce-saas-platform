@@ -23,6 +23,16 @@ interface ErrorResponseBody {
   timestamp: string;
 }
 
+interface PaginatedCoursesResponseBody {
+  data: CourseResponseBody[];
+  meta: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
 describe('CoursesController (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -233,6 +243,234 @@ describe('CoursesController (e2e)', () => {
 
       const afterCount = await prisma.course.count();
       expect(afterCount).toBe(beforeCount);
+    });
+  });
+
+  describe('GET /courses', () => {
+    let publishedId1: string;
+    let publishedId2: string;
+    let draftId1: string;
+
+    beforeAll(async () => {
+      // This spec file is the sole owner of the Course table in the test
+      // DB (app.e2e-spec.ts never touches it), so it's safe to reset it to
+      // a known, deterministic set of fixtures for the list endpoint tests.
+      await prisma.course.deleteMany({});
+
+      const published1 = await prisma.course.create({
+        data: { title: 'GET /courses e2e - published 1', status: 'PUBLISHED' },
+      });
+      const published2 = await prisma.course.create({
+        data: { title: 'GET /courses e2e - published 2', status: 'PUBLISHED' },
+      });
+      const draft1 = await prisma.course.create({
+        data: { title: 'GET /courses e2e - draft 1', status: 'DRAFT' },
+      });
+
+      publishedId1 = published1.id;
+      publishedId2 = published2.id;
+      draftId1 = draft1.id;
+    });
+
+    afterAll(async () => {
+      // Safety-net cleanup: runs unconditionally, independent of whether the
+      // "empty results" test (which deletes these same fixtures as part of
+      // its own setup) ran or passed. deleteMany with already-deleted ids is
+      // a no-op, so this is idempotent regardless of execution order.
+      await prisma.course.deleteMany({
+        where: { id: { in: [publishedId1, publishedId2, draftId1] } },
+      });
+    });
+
+    describe('success', () => {
+      it('returns a paginated list with default page/limit and all seeded courses', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toHaveLength(3);
+        expect(body.meta).toEqual({
+          page: 1,
+          limit: 10,
+          total: 3,
+          totalPages: 1,
+        });
+      });
+
+      it('filters by status=PUBLISHED', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ status: 'PUBLISHED' })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toHaveLength(2);
+        expect(body.data.every((c) => c.status === 'PUBLISHED')).toBe(true);
+        expect(body.data.map((c) => c.id).sort()).toEqual(
+          [publishedId1, publishedId2].sort(),
+        );
+        expect(body.meta.total).toBe(2);
+      });
+
+      it('filters by status=DRAFT', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ status: 'DRAFT' })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toHaveLength(1);
+        expect(body.data[0].id).toBe(draftId1);
+        expect(body.data[0].status).toBe('DRAFT');
+        expect(body.meta.total).toBe(1);
+      });
+
+      it('paginates with page and limit', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ page: 2, limit: 1 })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toHaveLength(1);
+        expect(body.meta).toMatchObject({
+          page: 2,
+          limit: 1,
+          total: 3,
+          totalPages: 3,
+        });
+      });
+
+      it('returns an empty data array (not an error) when the page is beyond the last page', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ page: 999, limit: 10 })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toEqual([]);
+        expect(body.meta.total).toBe(3);
+      });
+    });
+
+    describe('validation failures', () => {
+      it('rejects an invalid status value', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ status: 'NOT_A_STATUS' })
+          .set('x-user-id', adminId)
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(400);
+        const message = Array.isArray(body.message)
+          ? body.message.join(' ')
+          : body.message;
+        expect(message).toContain('status');
+      });
+
+      it('rejects page=0', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .query({ page: 0 })
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+
+      it('rejects a negative page', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .query({ page: -1 })
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+
+      it('rejects limit=0', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .query({ limit: 0 })
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+
+      it('rejects a limit above the cap of 100', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .query({ limit: 1000 })
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+
+      it('rejects a non-numeric page', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .query({ page: 'abc' })
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+
+      it('rejects an unknown query param', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .query({ unknownParam: 'value' })
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 when the x-user-id header is missing', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses',
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user', async () => {
+        await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', nonAdminId)
+          .expect(403);
+      });
+    });
+
+    describe('empty results', () => {
+      it('returns 200 with data: [] and meta.total 0 when no courses match at all', async () => {
+        await prisma.course.deleteMany({
+          where: { id: { in: [publishedId1, publishedId2, draftId1] } },
+        });
+
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toEqual([]);
+        expect(body.meta.total).toBe(0);
+        expect(body.meta.totalPages).toBe(0);
+      });
     });
   });
 });
