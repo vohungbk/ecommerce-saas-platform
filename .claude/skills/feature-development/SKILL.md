@@ -1,12 +1,6 @@
 ---
 name: feature-development
-description: >
-  Orchestrates the full feature-development lifecycle by delegating to the
-  planner, dev, qa, and reviewer agents in `.claude/agents/`, applying the
-  conventions in `.claude/rules/`, and enforcing two mandatory human
-  checkpoints (plan approval, final code approval). Use when the user asks
-  to build/implement a new feature end-to-end, says "start feature
-  development for X", or explicitly invokes this workflow.
+description: Chạy quy trình phát triển tính năng đầy đủ (Planner -> Dev -> QA -> Reviewer)
 ---
 
 # Feature Development Workflow
