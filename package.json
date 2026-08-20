@@ -1,0 +1,36 @@
+{
+  "name": "ecommerce-saas-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.2.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api dev",
+    "build": "pnpm --filter \"./apps/*\" build",
+    "lint": "pnpm --filter \"./apps/*\" lint",
+    "typecheck": "pnpm --filter \"./apps/*\" typecheck",
+    "test": "pnpm --filter \"./apps/*\" test",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f postgres",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:seed": "prisma db seed",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "prisma": "^7.9.1",
+    "tsx": "^4.19.2"
+  }
+}
