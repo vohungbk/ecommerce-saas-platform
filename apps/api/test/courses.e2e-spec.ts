@@ -473,4 +473,117 @@ describe('CoursesController (e2e)', () => {
       });
     });
   });
+
+  describe('GET /courses/:id', () => {
+    let courseId: string;
+
+    beforeAll(async () => {
+      const course = await prisma.course.create({
+        data: {
+          title: 'GET /courses/:id e2e - target course',
+          status: 'PUBLISHED',
+        },
+      });
+      courseId = course.id;
+      createdCourseIds.push(courseId);
+    });
+
+    afterAll(async () => {
+      await prisma.course.deleteMany({ where: { id: courseId } });
+    });
+
+    describe('success', () => {
+      it('returns 200 with the exact persisted course fields for an existing id', async () => {
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(Object.keys(body).sort()).toEqual(
+          [
+            'id',
+            'title',
+            'description',
+            'status',
+            'createdAt',
+            'updatedAt',
+          ].sort(),
+        );
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+        expect(body).toEqual({
+          id: persisted?.id,
+          title: persisted?.title,
+          description: persisted?.description ?? null,
+          status: persisted?.status,
+          createdAt: persisted?.createdAt.toISOString(),
+          updatedAt: persisted?.updatedAt.toISOString(),
+        });
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 with the standard error shape for a well-formed but non-existent id', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses/nonexistent-course-id')
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id',
+          timestamp: expect.any(String) as string,
+        });
+      });
+    });
+
+    describe('validation failures', () => {
+      it('returns 400 with the standard error shape for a whitespace-only id', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses/%20%20')
+          .set('x-user-id', adminId)
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(400);
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${courseId}`)
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${courseId}`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        await request(app.getHttpServer())
+          .get(`/courses/${courseId}`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user even when the course exists', async () => {
+        await request(app.getHttpServer())
+          .get(`/courses/${courseId}`)
+          .set('x-user-id', nonAdminId)
+          .expect(403);
+      });
+    });
+  });
 });

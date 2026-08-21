@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Course, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -54,5 +54,15 @@ export class CoursesService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  async findOne(id: string): Promise<Course> {
+    const course = await this.prisma.course.findUnique({ where: { id } });
+
+    if (!course) {
+      throw new NotFoundException('Course not found');
+    }
+
+    return course;
   }
 }

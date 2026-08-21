@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -8,6 +9,7 @@ describe('CoursesService', () => {
       create: jest.Mock;
       findMany: jest.Mock;
       count: jest.Mock;
+      findUnique: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -19,6 +21,7 @@ describe('CoursesService', () => {
         create: jest.fn().mockResolvedValue({}),
         findMany: jest.fn(),
         count: jest.fn(),
+        findUnique: jest.fn(),
       },
       $transaction: jest.fn(
         (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
@@ -155,6 +158,35 @@ describe('CoursesService', () => {
       });
 
       expect(result.meta.totalPages).toBe(2);
+    });
+  });
+
+  describe('findOne', () => {
+    it('returns the course when prisma finds it', async () => {
+      const course = {
+        id: 'course-1',
+        title: 'Intro to TypeScript',
+        description: null,
+        status: 'DRAFT',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      prisma.course.findUnique.mockResolvedValue(course);
+
+      const result = await service.findOne('course-1');
+
+      expect(prisma.course.findUnique).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+      });
+      expect(result).toEqual(course);
+    });
+
+    it('throws NotFoundException when prisma resolves null', async () => {
+      prisma.course.findUnique.mockResolvedValue(null);
+
+      await expect(service.findOne('missing-id')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 });
