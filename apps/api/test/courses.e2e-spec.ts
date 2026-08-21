@@ -586,4 +586,213 @@ describe('CoursesController (e2e)', () => {
       });
     });
   });
+
+  describe('PATCH /courses/:id', () => {
+    let courseId: string;
+
+    beforeAll(async () => {
+      const course = await prisma.course.create({
+        data: {
+          title: 'PATCH /courses/:id e2e - target course',
+          description: 'Original description',
+          status: 'PUBLISHED',
+        },
+      });
+      courseId = course.id;
+      createdCourseIds.push(courseId);
+    });
+
+    afterAll(async () => {
+      await prisma.course.deleteMany({ where: { id: courseId } });
+    });
+
+    describe('success', () => {
+      it('updates title only, leaves description unchanged, and persists the change', async () => {
+        const before = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Updated Title' })
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body).toMatchObject({
+          id: courseId,
+          title: 'Updated Title',
+          description: 'Original description',
+          status: 'PUBLISHED',
+        });
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+        expect(persisted?.title).toBe('Updated Title');
+        expect(persisted?.description).toBe('Original description');
+        expect(persisted?.updatedAt.getTime()).toBeGreaterThan(
+          before?.updatedAt.getTime() ?? 0,
+        );
+      });
+
+      it('updates description only, leaves title unchanged', async () => {
+        const before = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .send({ description: 'A new description' })
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body.title).toBe(before?.title);
+        expect(body.description).toBe('A new description');
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+        expect(persisted?.title).toBe(before?.title);
+        expect(persisted?.description).toBe('A new description');
+      });
+    });
+
+    describe('validation failures', () => {
+      it('rejects a title shorter than 3 characters', async () => {
+        const before = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'ab' })
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 400,
+          error: expect.any(String) as string,
+          path: `/courses/${courseId}`,
+          timestamp: expect.any(String) as string,
+        });
+        expect(
+          typeof body.message === 'string' || Array.isArray(body.message),
+        ).toBe(true);
+
+        const after = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+        expect(after).toEqual(before);
+      });
+
+      it('rejects a title longer than 200 characters', async () => {
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'a'.repeat(201) })
+          .expect(400);
+      });
+
+      it('rejects a whitespace-only title', async () => {
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .send({ title: '   ' })
+          .expect(400);
+      });
+
+      it('rejects an extraneous status field and leaves status unchanged', async () => {
+        const before = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', adminId)
+          .send({ status: 'DRAFT' })
+          .expect(400);
+
+        const after = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+        expect(after?.status).toBe(before?.status);
+      });
+
+      it('returns 400 with the standard error shape for a whitespace-only id', async () => {
+        const response = await request(app.getHttpServer())
+          .patch('/courses/%20%20')
+          .set('x-user-id', adminId)
+          .send({ title: 'Valid Title' })
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(400);
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 with the standard error shape for a well-formed but non-existent id', async () => {
+        const response = await request(app.getHttpServer())
+          .patch('/courses/nonexistent-course-id')
+          .set('x-user-id', adminId)
+          .send({ title: 'Valid Title' })
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id',
+          timestamp: expect.any(String) as string,
+        });
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .send({ title: 'Valid Title' })
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${courseId}`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .send({ title: 'Valid Title' })
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user and does not change the course row', async () => {
+        const before = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}`)
+          .set('x-user-id', nonAdminId)
+          .send({ title: 'Should Not Apply' })
+          .expect(403);
+
+        const after = await prisma.course.findUnique({
+          where: { id: courseId },
+        });
+        expect(after).toEqual(before);
+      });
+    });
+  });
 });

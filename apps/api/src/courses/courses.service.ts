@@ -3,6 +3,7 @@ import { Course, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { FindCoursesQueryDto } from './dto/find-courses-query.dto';
+import { UpdateCourseDto } from './dto/update-course.dto';
 
 export interface PaginatedCourses {
   data: Course[];
@@ -64,5 +65,25 @@ export class CoursesService {
     }
 
     return course;
+  }
+
+  async update(id: string, dto: UpdateCourseDto): Promise<Course> {
+    await this.findOne(id);
+
+    const data: Prisma.CourseUpdateInput = {};
+    // `null` is treated the same as "field not present": class-validator's
+    // `@IsOptional()` skips validation for an explicit `null`, so a
+    // strict `!== undefined` check here would let `null` reach `.trim()`
+    // and crash. Neither field has a "clear this value" convention (see
+    // create-course.dto.ts), so `null`/`undefined` both leave the
+    // persisted value unchanged.
+    if (dto.title != null) {
+      data.title = dto.title.trim();
+    }
+    if (dto.description != null) {
+      data.description = dto.description.trim();
+    }
+
+    return this.prisma.course.update({ where: { id }, data });
   }
 }

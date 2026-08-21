@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -20,6 +21,7 @@ import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { FindCourseParamsDto } from './dto/find-course-params.dto';
 import { FindCoursesQueryDto } from './dto/find-courses-query.dto';
+import { UpdateCourseDto } from './dto/update-course.dto';
 
 @ApiTags('courses')
 @ApiHeader({
@@ -130,5 +132,40 @@ export class CoursesController {
   @ApiResponse({ status: 404, description: 'Course not found' })
   findOne(@Param() params: FindCourseParamsDto) {
     return this.coursesService.findOne(params.id);
+  }
+
+  @Patch(':id')
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'Update a course (admin only)',
+    description:
+      'Partially updates title and/or description of an existing course by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+  })
+  @ApiParam({ name: 'id', description: 'Course id' })
+  @ApiResponse({
+    status: 200,
+    description: 'The updated course',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        title: { type: 'string', example: 'Intro to TypeScript' },
+        description: {
+          type: 'string',
+          nullable: true,
+          example: 'A beginner course covering TypeScript fundamentals.',
+        },
+        status: { type: 'string', enum: Object.values(CourseStatus) },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
+  @ApiResponse({ status: 404, description: 'Course not found' })
+  update(@Param() params: FindCourseParamsDto, @Body() dto: UpdateCourseDto) {
+    return this.coursesService.update(params.id, dto);
   }
 }

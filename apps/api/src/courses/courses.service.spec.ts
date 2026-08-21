@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
+import { UpdateCourseDto } from './dto/update-course.dto';
 
 describe('CoursesService', () => {
   let prisma: {
@@ -10,6 +11,7 @@ describe('CoursesService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
       findUnique: jest.Mock;
+      update: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -22,6 +24,7 @@ describe('CoursesService', () => {
         findMany: jest.fn(),
         count: jest.fn(),
         findUnique: jest.fn(),
+        update: jest.fn(),
       },
       $transaction: jest.fn(
         (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
@@ -187,6 +190,92 @@ describe('CoursesService', () => {
       await expect(service.findOne('missing-id')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('update', () => {
+    const existingCourse = {
+      id: 'course-1',
+      title: 'Intro to TypeScript',
+      description: 'Original description',
+      status: 'DRAFT',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    beforeEach(() => {
+      prisma.course.findUnique.mockResolvedValue(existingCourse);
+      prisma.course.update.mockResolvedValue(existingCourse);
+    });
+
+    it('updates only title when only title is provided', async () => {
+      const dto = { title: '  New Title  ' } as UpdateCourseDto;
+
+      await service.update('course-1', dto);
+
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { title: 'New Title' },
+      });
+    });
+
+    it('updates only description when only description is provided', async () => {
+      const dto = { description: '  New description  ' } as UpdateCourseDto;
+
+      await service.update('course-1', dto);
+
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { description: 'New description' },
+      });
+    });
+
+    it('updates both title and description, both trimmed, when both are provided', async () => {
+      const dto = {
+        title: '  New Title  ',
+        description: '  New description  ',
+      } as UpdateCourseDto;
+
+      await service.update('course-1', dto);
+
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { title: 'New Title', description: 'New description' },
+      });
+    });
+
+    it('treats an explicit null title as "not provided" without crashing', async () => {
+      const dto = { title: null } as unknown as UpdateCourseDto;
+
+      await expect(service.update('course-1', dto)).resolves.toEqual(
+        existingCourse,
+      );
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: {},
+      });
+    });
+
+    it('treats an explicit null description as "not provided" without crashing', async () => {
+      const dto = { description: null } as unknown as UpdateCourseDto;
+
+      await expect(service.update('course-1', dto)).resolves.toEqual(
+        existingCourse,
+      );
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: {},
+      });
+    });
+
+    it('throws NotFoundException and never calls prisma.course.update when the course does not exist', async () => {
+      prisma.course.findUnique.mockResolvedValue(null);
+      const dto = { title: 'New Title' } as UpdateCourseDto;
+
+      await expect(service.update('missing-id', dto)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.course.update).not.toHaveBeenCalled();
     });
   });
 });
