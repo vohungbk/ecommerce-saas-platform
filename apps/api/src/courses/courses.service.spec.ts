@@ -82,12 +82,14 @@ describe('CoursesService', () => {
       const result = await service.findAll({});
 
       expect(prisma.course.findMany).toHaveBeenCalledWith({
-        where: undefined,
+        where: { deletedAt: null },
         skip: 0,
         take: 10,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       });
-      expect(prisma.course.count).toHaveBeenCalledWith({ where: undefined });
+      expect(prisma.course.count).toHaveBeenCalledWith({
+        where: { deletedAt: null },
+      });
       expect(result.meta).toEqual({
         page: 1,
         limit: 10,
@@ -103,7 +105,7 @@ describe('CoursesService', () => {
       await service.findAll({ page: 2, limit: 5 });
 
       expect(prisma.course.findMany).toHaveBeenCalledWith({
-        where: undefined,
+        where: { deletedAt: null },
         skip: 5,
         take: 5,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -119,26 +121,27 @@ describe('CoursesService', () => {
       });
 
       expect(prisma.course.findMany).toHaveBeenCalledWith({
-        where: { status: 'PUBLISHED' },
+        where: { deletedAt: null, status: 'PUBLISHED' },
         skip: 0,
         take: 10,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       });
       expect(prisma.course.count).toHaveBeenCalledWith({
-        where: { status: 'PUBLISHED' },
+        where: { deletedAt: null, status: 'PUBLISHED' },
       });
     });
 
-    it('does not include a status key in where when no filter is provided', async () => {
+    it('always excludes soft-deleted courses via deletedAt: null in where', async () => {
       prisma.course.findMany.mockResolvedValue([]);
       prisma.course.count.mockResolvedValue(0);
 
       await service.findAll({});
 
       const calls = prisma.course.findMany.mock.calls as Array<
-        [{ where?: unknown }]
+        [{ where?: { deletedAt?: unknown; status?: unknown } }]
       >;
-      expect(calls[0][0].where).toBeUndefined();
+      expect(calls[0][0].where?.deletedAt).toBeNull();
+      expect(calls[0][0].where?.status).toBeUndefined();
     });
 
     it('returns an empty data array without error when there are no matches', async () => {
@@ -173,13 +176,14 @@ describe('CoursesService', () => {
         status: 'DRAFT',
         createdAt: new Date(),
         updatedAt: new Date(),
+        deletedAt: null,
       };
       prisma.course.findUnique.mockResolvedValue(course);
 
       const result = await service.findOne('course-1');
 
       expect(prisma.course.findUnique).toHaveBeenCalledWith({
-        where: { id: 'course-1' },
+        where: { id: 'course-1', deletedAt: null },
       });
       expect(result).toEqual(course);
     });
@@ -191,6 +195,20 @@ describe('CoursesService', () => {
         NotFoundException,
       );
     });
+
+    it('excludes soft-deleted courses by filtering deletedAt: null', async () => {
+      // A soft-deleted course is treated the same as "not found" at the
+      // Prisma layer (deletedAt: null excludes it from the result set), so
+      // this asserts the filter is present rather than mocking a deleted row.
+      prisma.course.findUnique.mockResolvedValue(null);
+
+      await expect(service.findOne('deleted-course')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.course.findUnique).toHaveBeenCalledWith({
+        where: { id: 'deleted-course', deletedAt: null },
+      });
+    });
   });
 
   describe('update', () => {
@@ -201,6 +219,7 @@ describe('CoursesService', () => {
       status: 'DRAFT',
       createdAt: new Date(),
       updatedAt: new Date(),
+      deletedAt: null,
     };
 
     beforeEach(() => {
@@ -273,6 +292,41 @@ describe('CoursesService', () => {
       const dto = { title: 'New Title' } as UpdateCourseDto;
 
       await expect(service.update('missing-id', dto)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove', () => {
+    const existingCourse = {
+      id: 'course-1',
+      title: 'Intro to TypeScript',
+      description: 'Original description',
+      status: 'DRAFT',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+
+    it('sets deletedAt via prisma.course.update when the course exists', async () => {
+      prisma.course.findUnique.mockResolvedValue(existingCourse);
+      const deletedCourse = { ...existingCourse, deletedAt: new Date() };
+      prisma.course.update.mockResolvedValue(deletedCourse);
+
+      const result = await service.remove('course-1');
+
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { deletedAt: expect.any(Date) as Date },
+      });
+      expect(result).toEqual(deletedCourse);
+    });
+
+    it('throws NotFoundException and never calls prisma.course.update when the course does not exist', async () => {
+      prisma.course.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove('missing-id')).rejects.toThrow(
         NotFoundException,
       );
       expect(prisma.course.update).not.toHaveBeenCalled();

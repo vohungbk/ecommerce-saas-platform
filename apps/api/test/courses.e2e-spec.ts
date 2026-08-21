@@ -13,6 +13,7 @@ interface CourseResponseBody {
   status: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
 }
 
 interface ErrorResponseBody {
@@ -107,6 +108,7 @@ describe('CoursesController (e2e)', () => {
       expect(body.createdAt).toBeDefined();
       expect(body.updatedAt).toBeDefined();
       expect(body.description).toBeNull();
+      expect(body.deletedAt).toBeNull();
 
       const persisted = await prisma.course.findUnique({
         where: { id: body.id },
@@ -126,6 +128,7 @@ describe('CoursesController (e2e)', () => {
 
       expect(body.title).toBe('abc');
       expect(body.status).toBe('DRAFT');
+      expect(body.deletedAt).toBeNull();
     });
 
     it('accepts a title exactly 200 characters long (upper boundary)', async () => {
@@ -141,6 +144,7 @@ describe('CoursesController (e2e)', () => {
 
       expect(body.title).toBe(title);
       expect(body.status).toBe('DRAFT');
+      expect(body.deletedAt).toBeNull();
     });
 
     it('persists the supplied description', async () => {
@@ -154,6 +158,7 @@ describe('CoursesController (e2e)', () => {
       createdCourseIds.push(body.id);
 
       expect(body.description).toBe('A beginner course');
+      expect(body.deletedAt).toBeNull();
     });
   });
 
@@ -508,6 +513,7 @@ describe('CoursesController (e2e)', () => {
             'status',
             'createdAt',
             'updatedAt',
+            'deletedAt',
           ].sort(),
         );
 
@@ -521,6 +527,7 @@ describe('CoursesController (e2e)', () => {
           status: persisted?.status,
           createdAt: persisted?.createdAt.toISOString(),
           updatedAt: persisted?.updatedAt.toISOString(),
+          deletedAt: persisted?.deletedAt ?? null,
         });
       });
     });
@@ -750,6 +757,35 @@ describe('CoursesController (e2e)', () => {
           timestamp: expect.any(String) as string,
         });
       });
+
+      it('returns 404 with the standard error shape when patching a soft-deleted course', async () => {
+        const course = await prisma.course.create({
+          data: {
+            title: 'PATCH /courses/:id e2e - soft-deleted target',
+            status: 'PUBLISHED',
+          },
+        });
+        createdCourseIds.push(course.id);
+        await prisma.course.update({
+          where: { id: course.id },
+          data: { deletedAt: new Date() },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Valid Title' })
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}`,
+          timestamp: expect.any(String) as string,
+        });
+      });
     });
 
     describe('authn/authz failures', () => {
@@ -792,6 +828,203 @@ describe('CoursesController (e2e)', () => {
           where: { id: courseId },
         });
         expect(after).toEqual(before);
+      });
+    });
+  });
+
+  describe('DELETE /courses/:id', () => {
+    const createCourse = async (
+      overrides: { title?: string; status?: 'DRAFT' | 'PUBLISHED' } = {},
+    ) => {
+      const course = await prisma.course.create({
+        data: {
+          title: overrides.title ?? 'DELETE /courses/:id e2e - target course',
+          status: overrides.status ?? 'PUBLISHED',
+        },
+      });
+      createdCourseIds.push(course.id);
+      return course;
+    };
+
+    describe('success', () => {
+      it('soft-deletes an existing course: returns 200 with deletedAt populated, and a subsequent GET on the same id returns 404', async () => {
+        const course = await createCourse({ title: 'To be deleted' });
+
+        const response = await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body).toMatchObject({
+          id: course.id,
+          title: 'To be deleted',
+          status: 'PUBLISHED',
+        });
+        expect(body.deletedAt).toEqual(expect.any(String));
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.deletedAt).not.toBeNull();
+
+        await request(app.getHttpServer())
+          .get(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(404);
+      });
+    });
+
+    describe('not found / already deleted', () => {
+      it('returns 404 with the standard error shape for a well-formed but non-existent id', async () => {
+        const response = await request(app.getHttpServer())
+          .delete('/courses/nonexistent-course-id')
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id',
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 404 when deleting a course that has already been soft-deleted', async () => {
+        const course = await createCourse();
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(404);
+      });
+    });
+
+    describe('validation failures', () => {
+      it('returns 400 with the standard error shape for a whitespace-only id', async () => {
+        const response = await request(app.getHttpServer())
+          .delete('/courses/%20%20')
+          .set('x-user-id', adminId)
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(400);
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const course = await createCourse();
+
+        const response = await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        const course = await createCourse();
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user and leaves the course row unchanged', async () => {
+        const course = await createCourse();
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', nonAdminId)
+          .expect(403);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.deletedAt).toBeNull();
+      });
+    });
+
+    describe('read-path exclusion', () => {
+      it('excludes a soft-deleted course from GET /courses and GET /courses/:id, and from meta.total/totalPages', async () => {
+        const course = await createCourse({
+          title: 'DELETE /courses/:id e2e - exclusion target',
+        });
+
+        const before = await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', adminId)
+          .query({ limit: 100 })
+          .expect(200);
+        const beforeBody = before.body as PaginatedCoursesResponseBody;
+        const beforeTotal = beforeBody.meta.total;
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        await request(app.getHttpServer())
+          .get(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const after = await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', adminId)
+          .query({ limit: 100 })
+          .expect(200);
+        const afterBody = after.body as PaginatedCoursesResponseBody;
+        expect(afterBody.data.some((c) => c.id === course.id)).toBe(false);
+        expect(afterBody.meta.total).toBe(beforeTotal - 1);
+        expect(afterBody.meta.totalPages).toBe(
+          Math.ceil((beforeTotal - 1) / 100),
+        );
+      });
+
+      it('excludes a soft-deleted course from GET /courses?status=<status> filtered results', async () => {
+        const course = await createCourse({
+          title: 'DELETE /courses/:id e2e - status filter exclusion target',
+          status: 'PUBLISHED',
+        });
+
+        const before = await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', adminId)
+          .query({ status: 'PUBLISHED', limit: 100 })
+          .expect(200);
+        const beforeBody = before.body as PaginatedCoursesResponseBody;
+        expect(beforeBody.data.some((c) => c.id === course.id)).toBe(true);
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const after = await request(app.getHttpServer())
+          .get('/courses')
+          .set('x-user-id', adminId)
+          .query({ status: 'PUBLISHED', limit: 100 })
+          .expect(200);
+        const afterBody = after.body as PaginatedCoursesResponseBody;
+        expect(afterBody.data.some((c) => c.id === course.id)).toBe(false);
+        expect(afterBody.meta.total).toBe(beforeBody.meta.total - 1);
       });
     });
   });

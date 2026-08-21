@@ -33,6 +33,7 @@ model Course {
   status      CourseStatus @default(DRAFT)
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?    @map("deleted_at")
 
   @@map("courses")
 }

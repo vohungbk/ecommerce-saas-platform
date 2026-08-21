@@ -32,9 +32,10 @@ export class CoursesService {
   async findAll(query: FindCoursesQueryDto): Promise<PaginatedCourses> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const where: Prisma.CourseWhereInput | undefined = query.status
-      ? { status: query.status }
-      : undefined;
+    const where: Prisma.CourseWhereInput = {
+      deletedAt: null,
+      ...(query.status ? { status: query.status } : {}),
+    };
 
     const [data, total] = await this.prisma.$transaction([
       this.prisma.course.findMany({
@@ -58,7 +59,9 @@ export class CoursesService {
   }
 
   async findOne(id: string): Promise<Course> {
-    const course = await this.prisma.course.findUnique({ where: { id } });
+    const course = await this.prisma.course.findUnique({
+      where: { id, deletedAt: null },
+    });
 
     if (!course) {
       throw new NotFoundException('Course not found');
@@ -85,5 +88,14 @@ export class CoursesService {
     }
 
     return this.prisma.course.update({ where: { id }, data });
+  }
+
+  async remove(id: string): Promise<Course> {
+    await this.findOne(id);
+
+    return this.prisma.course.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
   }
 }
