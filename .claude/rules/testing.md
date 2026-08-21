@@ -35,3 +35,10 @@
 - Never lower an assertion, delete a failing test, or add `.skip`/`.only`
   to force a green run — a failing test is reported, not silenced (root
   `CLAUDE.md`).
+- This also covers the quieter version of the same cheat: never change a
+  test's expected value to match whatever the current (possibly buggy)
+  code actually outputs. An expected value must come from the spec/
+  acceptance criteria — what the behavior *should* be — never from
+  observing actual output and copying it back in to force a pass. If the
+  actual output doesn't match the spec, that is a failing test to report,
+  not a test to "correct."

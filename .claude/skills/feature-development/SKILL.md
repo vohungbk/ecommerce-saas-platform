@@ -34,6 +34,14 @@ explicitly approves `plan.md`.
   and regenerate `plan.md`, then re-present it for approval.
 - Do not treat silence, an unrelated reply, or your own judgment as
   approval — approval must be explicit and about this plan.
+- After presenting `plan.md`, end your turn — make no further tool calls
+  (no invoking `dev`, no writing code, no editing files) until a new user
+  message arrives containing that explicit approval. Presenting the plan
+  and implementing it are two separate turns, never one continuous action.
+- This checkpoint overrides any general "keep going without stopping to
+  ask" bias from auto-mode or similar always-on instructions. Those
+  defaults exist for ambiguous judgment calls; this is not one — it is a
+  named, required stop with its own explicit rule, and it wins.
 
 ---
 
@@ -82,8 +90,12 @@ explicitly approves `plan.md`.
 2. The reviewer evaluates correctness, architecture (per root `CLAUDE.md`),
    security/tenant isolation, performance (N+1s), maintainability, and test
    coverage — grouped into blocking issues, suggestions, and nitpicks.
-3. If the reviewer reports blocking issues, hand back to the `dev` agent
-   (Step 2) to fix them, then re-run Step 3 and Step 4 before proceeding.
+3. **Fix loop:** if the reviewer reports blocking issues, hand back to the
+   `dev` agent (Step 2) to fix them, then re-run Step 3 and Step 4 before
+   proceeding.
+   - Max 3 review→fix cycles. If blocking issues still remain after the 3rd
+     round of fixes, stop and escalate to the user with the reviewer's
+     latest findings instead of continuing to loop.
 4. Consolidate the reviewer's findings and a summary diff (files changed,
    lines added/removed, one-line description per file) for the user.
 
@@ -96,6 +108,10 @@ gives final explicit approval of the code.
 - Ask the user to approve, request changes, or reject.
 - If changes are requested, return to Step 2 with the feedback, then repeat
   Step 3 and Step 4 before asking for approval again.
+- After presenting the summary, end your turn — make no further tool calls
+  (no invoking `dev`, no `git commit`) until a new user message arrives
+  containing explicit approval. This checkpoint overrides any general
+  "keep going without stopping" bias, same as Checkpoint 1.
 
 ---
 
@@ -118,6 +134,15 @@ gives final explicit approval of the code.
 
 ## Guardrails (apply throughout)
 
+- Context isolation between steps: each agent invocation in this workflow
+  starts fresh with no memory of prior conversation turns — never pass or
+  paraphrase the full chat log into an agent's prompt. Point each agent to
+  the persistent artifacts instead (`plan.md`, the actual files/diff via its
+  own `Read`/`Grep`/`git diff`) plus a concise, self-contained summary of
+  what it needs from the prior step. This is deliberate: it keeps QA from
+  trusting the dev agent's claims and the reviewer from trusting QA's
+  claims — each step re-derives ground truth from the real code instead of
+  from another agent's report.
 - Never let one agent silently do another agent's job (e.g. dev writing the
   plan, reviewer editing code). If a step's agent can't proceed within its
   own responsibility, stop and say so.
@@ -127,3 +152,14 @@ gives final explicit approval of the code.
 - Never weaken a test assertion or skip a failing test to get through
   Step 3 — report the failure and keep iterating instead, per
   `@rules/testing.md` and root `CLAUDE.md`.
+- Retry limits are the orchestrator's job to track, not the sub-agents'.
+  Each `dev`/`qa`/`reviewer` invocation is stateless and starts fresh (see
+  the context-isolation guardrail above) — it has no memory of how many
+  times this loop has already run and cannot self-report exhaustion. Count
+  fix-loop attempts yourself across turns: max 3 cycles for the Step 3
+  qa→dev loop, max 3 cycles for the Step 4 reviewer→dev loop (independent
+  counters — a feature can use up to 3 of each before escalating). On
+  hitting either limit, stop immediately and hand control back to the user
+  with the concrete failure/finding history so far — do not start a 4th
+  cycle "just to see," and do not silently reset the counter by rephrasing
+  the request to a sub-agent.
