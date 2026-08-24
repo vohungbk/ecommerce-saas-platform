@@ -483,4 +483,345 @@ describe('Course lessons (e2e)', () => {
       });
     });
   });
+
+  describe('PATCH /courses/:courseId/lessons/:lessonId', () => {
+    describe('success', () => {
+      it('updates title only, leaving description unchanged and refreshing updatedAt', async () => {
+        const course = await createCourse({
+          title: 'PATCH lesson e2e - title only course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: {
+            courseId: course.id,
+            title: 'Original title',
+            description: 'Original description',
+          },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'New title' })
+          .expect(200);
+
+        const body = response.body as LessonResponseBody;
+        expect(body).toMatchObject({
+          id: lesson.id,
+          courseId: course.id,
+          title: 'New title',
+          description: 'Original description',
+        });
+        expect(new Date(body.updatedAt).getTime()).toBeGreaterThan(
+          lesson.updatedAt.getTime(),
+        );
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('New title');
+        expect(persisted?.description).toBe('Original description');
+      });
+
+      it('updates description only, leaving title unchanged', async () => {
+        const course = await createCourse({
+          title: 'PATCH lesson e2e - description only course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: {
+            courseId: course.id,
+            title: 'Original title',
+            description: 'Original description',
+          },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ description: 'New description' })
+          .expect(200);
+
+        const body = response.body as LessonResponseBody;
+        expect(body).toMatchObject({
+          title: 'Original title',
+          description: 'New description',
+        });
+      });
+
+      it('updates both title and description when both are supplied', async () => {
+        const course = await createCourse({
+          title: 'PATCH lesson e2e - both fields course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: {
+            courseId: course.id,
+            title: 'Original title',
+            description: 'Original description',
+          },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'New title', description: 'New description' })
+          .expect(200);
+
+        const body = response.body as LessonResponseBody;
+        expect(body).toMatchObject({
+          title: 'New title',
+          description: 'New description',
+        });
+      });
+    });
+
+    describe('validation failures', () => {
+      let courseId: string;
+
+      beforeAll(async () => {
+        const course = await createCourse({
+          title: 'PATCH lesson e2e - validation failures course',
+        });
+        courseId = course.id;
+      });
+
+      const createLesson = () =>
+        prisma.lesson.create({
+          data: {
+            courseId,
+            title: 'Original title',
+            description: 'Original description',
+          },
+        });
+
+      it('rejects a title shorter than 3 characters, leaving the row unchanged', async () => {
+        const lesson = await createLesson();
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'ab' })
+          .expect(400);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('Original title');
+      });
+
+      it('rejects a title longer than 200 characters, leaving the row unchanged', async () => {
+        const lesson = await createLesson();
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'a'.repeat(201) })
+          .expect(400);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('Original title');
+      });
+
+      it('rejects a whitespace-only title, leaving the row unchanged', async () => {
+        const lesson = await createLesson();
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: '   ' })
+          .expect(400);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('Original title');
+      });
+
+      it('rejects an extraneous field, leaving the row unchanged', async () => {
+        const lesson = await createLesson();
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Valid title', order: 1 })
+          .expect(400);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('Original title');
+      });
+
+      it('rejects a client-supplied courseId in the body (cannot move a lesson to a different course), leaving the row unchanged', async () => {
+        const otherCourse = await createCourse({
+          title: 'PATCH lesson e2e - attempted move target course',
+        });
+        const lesson = await createLesson();
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Valid title', courseId: otherCourse.id })
+          .expect(400);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('Original title');
+        expect(persisted?.courseId).toBe(courseId);
+      });
+
+      it('returns 400 for a whitespace-only courseId', async () => {
+        await request(app.getHttpServer())
+          .patch('/courses/%20%20/lessons/some-lesson-id')
+          .set('x-user-id', adminId)
+          .send({ title: 'New title' })
+          .expect(400);
+      });
+
+      it('returns 400 for a whitespace-only lessonId', async () => {
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseId}/lessons/%20%20`)
+          .set('x-user-id', adminId)
+          .send({ title: 'New title' })
+          .expect(400);
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 ("Course not found") for a non-existent courseId regardless of lessonId', async () => {
+        const response = await request(app.getHttpServer())
+          .patch('/courses/nonexistent-course-id/lessons/some-lesson-id')
+          .set('x-user-id', adminId)
+          .send({ title: 'New title' })
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id/lessons/some-lesson-id',
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 404 for a soft-deleted course', async () => {
+        const course = await createCourse({
+          title: 'PATCH lesson e2e - soft-deleted course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Original title' },
+        });
+        await prisma.course.update({
+          where: { id: course.id },
+          data: { deletedAt: new Date() },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'New title' })
+          .expect(404);
+      });
+
+      it('returns 404 ("Lesson not found") for a well-formed but non-existent lessonId under an existing course', async () => {
+        const course = await createCourse({
+          title: 'PATCH lesson e2e - lesson not found course',
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/nonexistent-lesson-id`)
+          .set('x-user-id', adminId)
+          .send({ title: 'New title' })
+          .expect(404);
+      });
+
+      it('returns 404 (no cross-course leak) when the lessonId exists but belongs to a different course, and still succeeds under its real course', async () => {
+        const courseA = await createCourse({
+          title: 'PATCH lesson e2e - course A',
+        });
+        const courseB = await createCourse({
+          title: 'PATCH lesson e2e - course B',
+        });
+        const lessonInB = await prisma.lesson.create({
+          data: { courseId: courseB.id, title: 'Lesson in course B' },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${courseA.id}/lessons/${lessonInB.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Attempted update from course A' })
+          .expect(404);
+
+        const unchanged = await prisma.lesson.findUnique({
+          where: { id: lessonInB.id },
+        });
+        expect(unchanged?.title).toBe('Lesson in course B');
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${courseB.id}/lessons/${lessonInB.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Updated via course B' })
+          .expect(200);
+
+        const body = response.body as LessonResponseBody;
+        expect(body.title).toBe('Updated via course B');
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const course = await createCourse();
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Original title' },
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .send({ title: 'New title' })
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/lessons/${lesson.id}`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        const course = await createCourse();
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Original title' },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .send({ title: 'New title' })
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user and leaves the row unchanged', async () => {
+        const course = await createCourse();
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Original title' },
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', nonAdminId)
+          .send({ title: 'New title' })
+          .expect(403);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.title).toBe('Original title');
+      });
+    });
+  });
 });

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiHeader,
   ApiOperation,
@@ -10,6 +18,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { FindCourseLessonsParamsDto } from './dto/find-course-lessons-params.dto';
 import { FindLessonParamsDto } from './dto/find-lesson-params.dto';
+import { UpdateLessonDto } from './dto/update-lesson.dto';
 import { LessonsService } from './lessons.service';
 
 @ApiTags('lessons')
@@ -118,5 +127,44 @@ export class LessonsController {
   })
   findOne(@Param() params: FindLessonParamsDto) {
     return this.lessonsService.findOne(params.courseId, params.lessonId);
+  }
+
+  @Patch(':lessonId')
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'Update a lesson (admin only)',
+    description:
+      'Partially updates title and/or description of an existing lesson belonging to the given course. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+  })
+  @ApiParam({ name: 'courseId', description: 'Course id' })
+  @ApiParam({ name: 'lessonId', description: 'Lesson id' })
+  @ApiResponse({
+    status: 200,
+    description: 'The updated lesson',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        courseId: { type: 'string' },
+        title: { type: 'string', example: 'Setting up your environment' },
+        description: {
+          type: 'string',
+          nullable: true,
+          example: 'How to install the tools needed for this course.',
+        },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
+  @ApiResponse({
+    status: 404,
+    description: 'Course not found, or lesson not found',
+  })
+  update(@Param() params: FindLessonParamsDto, @Body() dto: UpdateLessonDto) {
+    return this.lessonsService.update(params.courseId, params.lessonId, dto);
   }
 }

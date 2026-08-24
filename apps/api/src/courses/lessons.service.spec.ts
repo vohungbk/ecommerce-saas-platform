@@ -3,6 +3,7 @@ import { LessonsService } from './lessons.service';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLessonDto } from './dto/create-lesson.dto';
+import { UpdateLessonDto } from './dto/update-lesson.dto';
 
 describe('LessonsService', () => {
   let prisma: {
@@ -10,6 +11,7 @@ describe('LessonsService', () => {
       create: jest.Mock;
       findMany: jest.Mock;
       findFirst: jest.Mock;
+      update: jest.Mock;
     };
   };
   let coursesService: { findOne: jest.Mock };
@@ -31,6 +33,7 @@ describe('LessonsService', () => {
         create: jest.fn().mockResolvedValue({}),
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
       },
     };
     coursesService = {
@@ -177,6 +180,119 @@ describe('LessonsService', () => {
         service.findOne('missing-course', 'lesson-1'),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.lesson.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    const existingLesson = {
+      id: 'lesson-1',
+      courseId: 'course-1',
+      title: 'Original title',
+      description: 'Original description',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    beforeEach(() => {
+      prisma.lesson.findFirst.mockResolvedValue(existingLesson);
+      prisma.lesson.update.mockResolvedValue(existingLesson);
+    });
+
+    it('resolves via findOne (course lookup then findFirst by id/courseId) before calling prisma.lesson.update', async () => {
+      const dto = { title: 'New title' } as UpdateLessonDto;
+
+      await service.update('course-1', 'lesson-1', dto);
+
+      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
+      expect(prisma.lesson.findFirst).toHaveBeenCalledWith({
+        where: { id: 'lesson-1', courseId: 'course-1' },
+      });
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: { title: 'New title' },
+      });
+    });
+
+    it('updates only title when only title is provided', async () => {
+      const dto = { title: '  New Title  ' } as UpdateLessonDto;
+
+      await service.update('course-1', 'lesson-1', dto);
+
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: { title: 'New Title' },
+      });
+    });
+
+    it('updates only description when only description is provided', async () => {
+      const dto = { description: '  New description  ' } as UpdateLessonDto;
+
+      await service.update('course-1', 'lesson-1', dto);
+
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: { description: 'New description' },
+      });
+    });
+
+    it('updates both title and description, both trimmed, when both are provided', async () => {
+      const dto = {
+        title: '  New Title  ',
+        description: '  New description  ',
+      } as UpdateLessonDto;
+
+      await service.update('course-1', 'lesson-1', dto);
+
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: { title: 'New Title', description: 'New description' },
+      });
+    });
+
+    it('treats an explicit null title as "not provided" without crashing', async () => {
+      const dto = { title: null } as unknown as UpdateLessonDto;
+
+      await expect(
+        service.update('course-1', 'lesson-1', dto),
+      ).resolves.toEqual(existingLesson);
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: {},
+      });
+    });
+
+    it('treats an explicit null description as "not provided" without crashing', async () => {
+      const dto = { description: null } as unknown as UpdateLessonDto;
+
+      await expect(
+        service.update('course-1', 'lesson-1', dto),
+      ).resolves.toEqual(existingLesson);
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: {},
+      });
+    });
+
+    it('throws NotFoundException and never calls prisma.lesson.update when the course does not exist', async () => {
+      coursesService.findOne.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+      const dto = { title: 'New title' } as UpdateLessonDto;
+
+      await expect(
+        service.update('missing-course', 'lesson-1', dto),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException and never calls prisma.lesson.update when the lesson does not exist under that course, or belongs to a different course', async () => {
+      prisma.lesson.findFirst.mockResolvedValue(null);
+      const dto = { title: 'New title' } as UpdateLessonDto;
+
+      await expect(
+        service.update('course-1', 'lesson-from-other-course', dto),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
     });
   });
 });
