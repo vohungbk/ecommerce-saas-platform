@@ -6,5 +6,6 @@
   "setupFiles": ["<rootDir>/jest-e2e.setup.ts"],
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
-  }
+  },
+  "maxWorkers": 1
 }

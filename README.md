@@ -65,6 +65,21 @@ pnpm typecheck    # tsc --noEmit for both apps (apps/web runs `next typegen` fir
 pnpm test         # unit tests for both apps
 ```
 
+### e2e tests
+
+`apps/api`'s e2e suite (`pnpm --filter api test:e2e`) hits a real database and
+resets tables between specs, so it must never run against your dev database.
+One-time setup:
+
+```bash
+# add DATABASE_URL_TEST to .env (see .env.example) — must be a different
+# database name than DATABASE_URL
+pnpm db:test:setup   # creates the test database and applies migrations to it
+```
+
+`test/jest-e2e.setup.ts` refuses to run if `DATABASE_URL_TEST` is missing or
+equal to `DATABASE_URL`, to prevent accidentally wiping dev data.
+
 ## Database
 
 - Schema: `prisma/schema.prisma`
