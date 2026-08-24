@@ -12,6 +12,7 @@ describe('LessonsService', () => {
       findMany: jest.Mock;
       findFirst: jest.Mock;
       update: jest.Mock;
+      delete: jest.Mock;
     };
   };
   let coursesService: { findOne: jest.Mock };
@@ -34,6 +35,7 @@ describe('LessonsService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
+        delete: jest.fn().mockResolvedValue({}),
       },
     };
     coursesService = {
@@ -293,6 +295,55 @@ describe('LessonsService', () => {
         service.update('course-1', 'lesson-from-other-course', dto),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove', () => {
+    const existingLesson = {
+      id: 'lesson-1',
+      courseId: 'course-1',
+      title: 'Original title',
+      description: 'Original description',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    beforeEach(() => {
+      prisma.lesson.findFirst.mockResolvedValue(existingLesson);
+      prisma.lesson.delete.mockResolvedValue(existingLesson);
+    });
+
+    it('resolves via findOne (course lookup then findFirst by id/courseId) before calling prisma.lesson.delete', async () => {
+      const result = await service.remove('course-1', 'lesson-1');
+
+      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
+      expect(prisma.lesson.findFirst).toHaveBeenCalledWith({
+        where: { id: 'lesson-1', courseId: 'course-1' },
+      });
+      expect(prisma.lesson.delete).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+      });
+      expect(result).toEqual(existingLesson);
+    });
+
+    it('throws NotFoundException and never calls prisma.lesson.delete when the course does not exist', async () => {
+      coursesService.findOne.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+
+      await expect(
+        service.remove('missing-course', 'lesson-1'),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.delete).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException and never calls prisma.lesson.delete when the lesson does not exist under that course, or belongs to a different course', async () => {
+      prisma.lesson.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.remove('course-1', 'lesson-from-other-course'),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.delete).not.toHaveBeenCalled();
     });
   });
 });

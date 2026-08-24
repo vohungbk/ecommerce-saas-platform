@@ -824,4 +824,260 @@ describe('Course lessons (e2e)', () => {
       });
     });
   });
+
+  describe('DELETE /courses/:courseId/lessons/:lessonId', () => {
+    describe('success', () => {
+      it('deletes the lesson, returns its persisted fields, and removes the row', async () => {
+        const course = await createCourse({
+          title: 'DELETE lesson e2e - target course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: {
+            courseId: course.id,
+            title: 'Lesson to delete',
+            description: 'Details',
+          },
+        });
+
+        const response = await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as LessonResponseBody;
+        expect(body).toEqual({
+          id: lesson.id,
+          courseId: course.id,
+          title: 'Lesson to delete',
+          description: 'Details',
+          createdAt: lesson.createdAt.toISOString(),
+          updatedAt: lesson.updatedAt.toISOString(),
+        });
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted).toBeNull();
+
+        await request(app.getHttpServer())
+          .get(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .expect(404);
+      });
+
+      it('leaves sibling lessons unaffected when deleting one lesson', async () => {
+        const course = await createCourse({
+          title: 'DELETE lesson e2e - sibling isolation course',
+        });
+        const lesson1 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A' },
+        });
+        const lesson2 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson B' },
+        });
+        const lesson3 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson C' },
+        });
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/${lesson2.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/lessons`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as LessonResponseBody[];
+        expect(body).toEqual([
+          {
+            id: lesson1.id,
+            courseId: course.id,
+            title: lesson1.title,
+            description: lesson1.description,
+            createdAt: lesson1.createdAt.toISOString(),
+            updatedAt: lesson1.updatedAt.toISOString(),
+          },
+          {
+            id: lesson3.id,
+            courseId: course.id,
+            title: lesson3.title,
+            description: lesson3.description,
+            createdAt: lesson3.createdAt.toISOString(),
+            updatedAt: lesson3.updatedAt.toISOString(),
+          },
+        ]);
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 with the standard error shape for a non-existent courseId, and deletes no Lesson row', async () => {
+        const beforeCount = await prisma.lesson.count();
+
+        const response = await request(app.getHttpServer())
+          .delete('/courses/nonexistent-course-id/lessons/some-lesson-id')
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id/lessons/some-lesson-id',
+          timestamp: expect.any(String) as string,
+        });
+
+        const afterCount = await prisma.lesson.count();
+        expect(afterCount).toBe(beforeCount);
+      });
+
+      it('returns 404 for a soft-deleted course', async () => {
+        const course = await createCourse({
+          title: 'DELETE lesson e2e - soft-deleted course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+        await prisma.course.update({
+          where: { id: course.id },
+          data: { deletedAt: new Date() },
+        });
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted).not.toBeNull();
+      });
+
+      it('returns 404 ("Lesson not found") for a well-formed but non-existent lessonId under an existing course', async () => {
+        const course = await createCourse({
+          title: 'DELETE lesson e2e - lesson not found course',
+        });
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/nonexistent-lesson-id`)
+          .set('x-user-id', adminId)
+          .expect(404);
+      });
+
+      it('returns 404 (no cross-course leak) when the lessonId exists but belongs to a different course, does not delete it, and still succeeds under its real course', async () => {
+        const courseA = await createCourse({
+          title: 'DELETE lesson e2e - course A',
+        });
+        const courseB = await createCourse({
+          title: 'DELETE lesson e2e - course B',
+        });
+        const lessonInB = await prisma.lesson.create({
+          data: { courseId: courseB.id, title: 'Lesson in course B' },
+        });
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${courseA.id}/lessons/${lessonInB.id}`)
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const stillThere = await prisma.lesson.findUnique({
+          where: { id: lessonInB.id },
+        });
+        expect(stillThere).not.toBeNull();
+        expect(stillThere?.title).toBe('Lesson in course B');
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${courseB.id}/lessons/${lessonInB.id}`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const afterReal = await prisma.lesson.findUnique({
+          where: { id: lessonInB.id },
+        });
+        expect(afterReal).toBeNull();
+      });
+    });
+
+    describe('validation failures', () => {
+      it('returns 400 for a whitespace-only courseId', async () => {
+        await request(app.getHttpServer())
+          .delete('/courses/%20%20/lessons/some-lesson-id')
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+
+      it('returns 400 for a whitespace-only lessonId', async () => {
+        const course = await createCourse();
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/%20%20`)
+          .set('x-user-id', adminId)
+          .expect(400);
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing, leaving the row intact', async () => {
+        const course = await createCourse();
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+
+        const response = await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/${lesson.id}`)
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/lessons/${lesson.id}`,
+          timestamp: expect.any(String) as string,
+        });
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted).not.toBeNull();
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user, leaving the row intact', async () => {
+        const course = await createCourse();
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted).not.toBeNull();
+      });
+
+      it('returns 403 for a non-admin user and leaves the row intact', async () => {
+        const course = await createCourse();
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+
+        await request(app.getHttpServer())
+          .delete(`/courses/${course.id}/lessons/${lesson.id}`)
+          .set('x-user-id', nonAdminId)
+          .expect(403);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted).not.toBeNull();
+      });
+    });
+  });
 });

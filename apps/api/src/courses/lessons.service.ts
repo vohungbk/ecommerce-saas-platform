@@ -68,4 +68,10 @@ export class LessonsService {
     // `findOne` call already proved this lesson belongs to `courseId`.
     return this.prisma.lesson.update({ where: { id: lessonId }, data });
   }
+
+  async remove(courseId: string, lessonId: string): Promise<Lesson> {
+    const lesson = await this.findOne(courseId, lessonId);
+
+    return this.prisma.lesson.delete({ where: { id: lesson.id } });
+  }
 }
