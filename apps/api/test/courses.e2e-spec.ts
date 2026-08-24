@@ -1028,4 +1028,319 @@ describe('CoursesController (e2e)', () => {
       });
     });
   });
+
+  describe('POST /courses/:id/publish', () => {
+    const createCourse = async (
+      overrides: { title?: string; status?: 'DRAFT' | 'PUBLISHED' } = {},
+    ) => {
+      const course = await prisma.course.create({
+        data: {
+          title:
+            overrides.title ?? 'POST /courses/:id/publish e2e - target course',
+          status: overrides.status ?? 'DRAFT',
+        },
+      });
+      createdCourseIds.push(course.id);
+      return course;
+    };
+
+    describe('success', () => {
+      it('publishes a DRAFT course: returns 200 with status PUBLISHED, persisted', async () => {
+        const course = await createCourse({ status: 'DRAFT' });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/publish`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body).toMatchObject({
+          id: course.id,
+          status: 'PUBLISHED',
+        });
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.status).toBe('PUBLISHED');
+      });
+    });
+
+    describe('validation failures', () => {
+      it('returns 400 with the standard error shape for a whitespace-only id', async () => {
+        const response = await request(app.getHttpServer())
+          .post('/courses/%20%20/publish')
+          .set('x-user-id', adminId)
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(400);
+      });
+    });
+
+    describe('conflict', () => {
+      it('returns 409 with the standard error shape when the course is already PUBLISHED, status unchanged', async () => {
+        const course = await createCourse({ status: 'PUBLISHED' });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/publish`)
+          .set('x-user-id', adminId)
+          .expect(409);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 409,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/publish`,
+          timestamp: expect.any(String) as string,
+        });
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.status).toBe('PUBLISHED');
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 with the standard error shape for a well-formed but non-existent id', async () => {
+        const response = await request(app.getHttpServer())
+          .post('/courses/nonexistent-course-id/publish')
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id/publish',
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 404 with the standard error shape when publishing a soft-deleted course', async () => {
+        const course = await createCourse({ status: 'DRAFT' });
+        await prisma.course.update({
+          where: { id: course.id },
+          data: { deletedAt: new Date() },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/publish`)
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/publish`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const course = await createCourse({ status: 'DRAFT' });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/publish`)
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/publish`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        const course = await createCourse({ status: 'DRAFT' });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/publish`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user and leaves the course status unchanged', async () => {
+        const course = await createCourse({ status: 'DRAFT' });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/publish`)
+          .set('x-user-id', nonAdminId)
+          .expect(403);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.status).toBe('DRAFT');
+      });
+    });
+  });
+
+  describe('POST /courses/:id/unpublish', () => {
+    const createCourse = async (
+      overrides: { title?: string; status?: 'DRAFT' | 'PUBLISHED' } = {},
+    ) => {
+      const course = await prisma.course.create({
+        data: {
+          title:
+            overrides.title ??
+            'POST /courses/:id/unpublish e2e - target course',
+          status: overrides.status ?? 'PUBLISHED',
+        },
+      });
+      createdCourseIds.push(course.id);
+      return course;
+    };
+
+    describe('success', () => {
+      it('unpublishes a PUBLISHED course: returns 200 with status DRAFT, persisted', async () => {
+        const course = await createCourse({ status: 'PUBLISHED' });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/unpublish`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body).toMatchObject({
+          id: course.id,
+          status: 'DRAFT',
+        });
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.status).toBe('DRAFT');
+      });
+    });
+
+    describe('validation failures', () => {
+      it('returns 400 with the standard error shape for a whitespace-only id', async () => {
+        const response = await request(app.getHttpServer())
+          .post('/courses/%20%20/unpublish')
+          .set('x-user-id', adminId)
+          .expect(400);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(400);
+      });
+    });
+
+    describe('conflict', () => {
+      it('returns 409 with the standard error shape when the course is already DRAFT, status unchanged', async () => {
+        const course = await createCourse({ status: 'DRAFT' });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/unpublish`)
+          .set('x-user-id', adminId)
+          .expect(409);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 409,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/unpublish`,
+          timestamp: expect.any(String) as string,
+        });
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.status).toBe('DRAFT');
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 with the standard error shape for a well-formed but non-existent id', async () => {
+        const response = await request(app.getHttpServer())
+          .post('/courses/nonexistent-course-id/unpublish')
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: '/courses/nonexistent-course-id/unpublish',
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 404 with the standard error shape when unpublishing a soft-deleted course', async () => {
+        const course = await createCourse({ status: 'PUBLISHED' });
+        await prisma.course.update({
+          where: { id: course.id },
+          data: { deletedAt: new Date() },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/unpublish`)
+          .set('x-user-id', adminId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 404,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/unpublish`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const course = await createCourse({ status: 'PUBLISHED' });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/unpublish`)
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/unpublish`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        const course = await createCourse({ status: 'PUBLISHED' });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/unpublish`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user and leaves the course status unchanged', async () => {
+        const course = await createCourse({ status: 'PUBLISHED' });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/unpublish`)
+          .set('x-user-id', nonAdminId)
+          .expect(403);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.status).toBe('PUBLISHED');
+      });
+    });
+  });
 });

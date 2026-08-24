@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Course, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -96,6 +100,32 @@ export class CoursesService {
     return this.prisma.course.update({
       where: { id },
       data: { deletedAt: new Date() },
+    });
+  }
+
+  async publish(id: string): Promise<Course> {
+    const course = await this.findOne(id);
+
+    if (course.status !== 'DRAFT') {
+      throw new ConflictException('Only a DRAFT course can be published');
+    }
+
+    return this.prisma.course.update({
+      where: { id },
+      data: { status: 'PUBLISHED' },
+    });
+  }
+
+  async unpublish(id: string): Promise<Course> {
+    const course = await this.findOne(id);
+
+    if (course.status !== 'PUBLISHED') {
+      throw new ConflictException('Only a PUBLISHED course can be unpublished');
+    }
+
+    return this.prisma.course.update({
+      where: { id },
+      data: { status: 'DRAFT' },
     });
   }
 }

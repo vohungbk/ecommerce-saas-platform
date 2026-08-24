@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -211,5 +213,84 @@ export class CoursesController {
   @ApiResponse({ status: 404, description: 'Course not found' })
   remove(@Param() params: FindCourseParamsDto) {
     return this.coursesService.remove(params.id);
+  }
+
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'Publish a course (admin only)',
+    description:
+      'Transitions a course from DRAFT to PUBLISHED by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+  })
+  @ApiParam({ name: 'id', description: 'Course id' })
+  @ApiResponse({
+    status: 200,
+    description: 'The published course',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        title: { type: 'string', example: 'Intro to TypeScript' },
+        description: {
+          type: 'string',
+          nullable: true,
+          example: 'A beginner course covering TypeScript fundamentals.',
+        },
+        status: { type: 'string', enum: Object.values(CourseStatus) },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+        deletedAt: { type: 'string', format: 'date-time', nullable: true },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
+  @ApiResponse({ status: 404, description: 'Course not found' })
+  @ApiResponse({ status: 409, description: 'Course is not in DRAFT status' })
+  publish(@Param() params: FindCourseParamsDto) {
+    return this.coursesService.publish(params.id);
+  }
+
+  @Post(':id/unpublish')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'Unpublish a course (admin only)',
+    description:
+      'Transitions a course from PUBLISHED to DRAFT by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+  })
+  @ApiParam({ name: 'id', description: 'Course id' })
+  @ApiResponse({
+    status: 200,
+    description: 'The unpublished course',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', format: 'uuid' },
+        title: { type: 'string', example: 'Intro to TypeScript' },
+        description: {
+          type: 'string',
+          nullable: true,
+          example: 'A beginner course covering TypeScript fundamentals.',
+        },
+        status: { type: 'string', enum: Object.values(CourseStatus) },
+        createdAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+        deletedAt: { type: 'string', format: 'date-time', nullable: true },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
+  @ApiResponse({ status: 404, description: 'Course not found' })
+  @ApiResponse({
+    status: 409,
+    description: 'Course is not in PUBLISHED status',
+  })
+  unpublish(@Param() params: FindCourseParamsDto) {
+    return this.coursesService.unpublish(params.id);
   }
 }

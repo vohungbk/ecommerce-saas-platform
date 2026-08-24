@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -328,6 +328,100 @@ describe('CoursesService', () => {
 
       await expect(service.remove('missing-id')).rejects.toThrow(
         NotFoundException,
+      );
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('publish', () => {
+    const draftCourse = {
+      id: 'course-1',
+      title: 'Intro to TypeScript',
+      description: 'Original description',
+      status: 'DRAFT',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+
+    it('transitions a DRAFT course to PUBLISHED', async () => {
+      prisma.course.findUnique.mockResolvedValue(draftCourse);
+      const publishedCourse = { ...draftCourse, status: 'PUBLISHED' };
+      prisma.course.update.mockResolvedValue(publishedCourse);
+
+      const result = await service.publish('course-1');
+
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { status: 'PUBLISHED' },
+      });
+      expect(result).toEqual(publishedCourse);
+    });
+
+    it('throws NotFoundException and never calls prisma.course.update when the course does not exist', async () => {
+      prisma.course.findUnique.mockResolvedValue(null);
+
+      await expect(service.publish('missing-id')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException and never calls prisma.course.update when the course is already PUBLISHED', async () => {
+      prisma.course.findUnique.mockResolvedValue({
+        ...draftCourse,
+        status: 'PUBLISHED',
+      });
+
+      await expect(service.publish('course-1')).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unpublish', () => {
+    const publishedCourse = {
+      id: 'course-1',
+      title: 'Intro to TypeScript',
+      description: 'Original description',
+      status: 'PUBLISHED',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+
+    it('transitions a PUBLISHED course to DRAFT', async () => {
+      prisma.course.findUnique.mockResolvedValue(publishedCourse);
+      const draftCourse = { ...publishedCourse, status: 'DRAFT' };
+      prisma.course.update.mockResolvedValue(draftCourse);
+
+      const result = await service.unpublish('course-1');
+
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { status: 'DRAFT' },
+      });
+      expect(result).toEqual(draftCourse);
+    });
+
+    it('throws NotFoundException and never calls prisma.course.update when the course does not exist', async () => {
+      prisma.course.findUnique.mockResolvedValue(null);
+
+      await expect(service.unpublish('missing-id')).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException and never calls prisma.course.update when the course is already DRAFT', async () => {
+      prisma.course.findUnique.mockResolvedValue({
+        ...publishedCourse,
+        status: 'DRAFT',
+      });
+
+      await expect(service.unpublish('course-1')).rejects.toThrow(
+        ConflictException,
       );
       expect(prisma.course.update).not.toHaveBeenCalled();
     });
