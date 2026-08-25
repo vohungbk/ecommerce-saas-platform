@@ -57,8 +57,9 @@ apps/
     src/
       health/     # GET /health (Terminus + Prisma ping check)
       prisma/     # PrismaService / PrismaModule (@Global)
-      auth/       # AdminGuard (dev-only x-user-id shim), CurrentUser decorator
+      auth/       # AdminGuard/AuthGuard (dev-only x-user-id shim), CurrentUser decorator
       courses/    # POST /courses (admin-only)
+      enrollments/ # POST /courses/:courseId/enroll, GET /enrollments (any authenticated user)
       common/     # cross-cutting Nest pieces (e.g. global exception filter)
 packages/         # Shared packages — created only when a genuine cross-app need exists
 prisma/

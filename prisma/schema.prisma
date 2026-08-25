@@ -17,11 +17,12 @@ enum CourseStatus {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  role      Role     @default(USER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String       @id @default(cuid())
+  email       String       @unique
+  role        Role         @default(USER)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  enrollments Enrollment[]
 
   @@map("users")
 }
@@ -35,6 +36,7 @@ model Course {
   updatedAt   DateTime     @updatedAt
   deletedAt   DateTime?    @map("deleted_at")
   lessons     Lesson[]
+  enrollments Enrollment[]
 
   @@map("courses")
 }
@@ -50,4 +52,16 @@ model Lesson {
   updatedAt   DateTime @updatedAt
 
   @@map("lessons")
+}
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+  @@map("enrollments")
 }
