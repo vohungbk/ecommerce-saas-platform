@@ -3,12 +3,15 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import {
+  ApiBody,
   ApiHeader,
   ApiOperation,
   ApiParam,
@@ -19,6 +22,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { CreateLessonDto } from './dto/create-lesson.dto';
 import { FindCourseLessonsParamsDto } from './dto/find-course-lessons-params.dto';
 import { FindLessonParamsDto } from './dto/find-lesson-params.dto';
+import { ReorderLessonsDto } from './dto/reorder-lessons.dto';
 import { UpdateLessonDto } from './dto/update-lesson.dto';
 import { LessonsService } from './lessons.service';
 
@@ -77,6 +81,7 @@ export class LessonsController {
             nullable: true,
             example: 'How to install the tools needed for this course.',
           },
+          position: { type: 'integer', example: 1 },
           createdAt: { type: 'string', format: 'date-time' },
           updatedAt: { type: 'string', format: 'date-time' },
         },
@@ -89,6 +94,58 @@ export class LessonsController {
   @ApiResponse({ status: 404, description: 'Course not found' })
   findAll(@Param() params: FindCourseLessonsParamsDto) {
     return this.lessonsService.findAllForCourse(params.courseId);
+  }
+
+  @Post('reorder')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: "Reorder a course's lessons (admin only)",
+    description:
+      "Persists a full reordering of the course's lessons. The request must list every lesson currently belonging to the course, each with a unique target position. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).",
+  })
+  @ApiParam({ name: 'courseId', description: 'Course id' })
+  @ApiBody({ type: ReorderLessonsDto })
+  @ApiResponse({
+    status: 200,
+    description: "The course's lessons in their new persisted order",
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          courseId: { type: 'string' },
+          title: { type: 'string', example: 'Setting up your environment' },
+          description: {
+            type: 'string',
+            nullable: true,
+            example: 'How to install the tools needed for this course.',
+          },
+          position: { type: 'integer', example: 1 },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      "Validation failed, duplicate id/position in the payload, or the payload does not include all of the course's lessons",
+  })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Course not found, or a lesson id does not belong to this course',
+  })
+  reorder(
+    @Param() params: FindCourseLessonsParamsDto,
+    @Body() dto: ReorderLessonsDto,
+  ) {
+    return this.lessonsService.reorder(params.courseId, dto);
   }
 
   @Get(':lessonId')
@@ -114,6 +171,7 @@ export class LessonsController {
           nullable: true,
           example: 'How to install the tools needed for this course.',
         },
+        position: { type: 'integer', example: 1 },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
       },
@@ -153,6 +211,7 @@ export class LessonsController {
           nullable: true,
           example: 'How to install the tools needed for this course.',
         },
+        position: { type: 'integer', example: 1 },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
       },
@@ -192,6 +251,7 @@ export class LessonsController {
           nullable: true,
           example: 'How to install the tools needed for this course.',
         },
+        position: { type: 'integer', example: 1 },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
       },

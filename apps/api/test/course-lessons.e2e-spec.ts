@@ -11,6 +11,7 @@ interface LessonResponseBody {
   courseId: string;
   title: string;
   description: string | null;
+  position: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -311,6 +312,37 @@ describe('Course lessons (e2e)', () => {
 
         expect(response.body).toEqual([]);
       });
+
+      it('orders lessons by position, not by creation order, when positions are set out of creation order', async () => {
+        const course = await createCourse({
+          title: 'GET lessons e2e - position ordering course',
+        });
+
+        // Created in this order (A, B, C) but seeded with positions that
+        // reverse that order, proving the response follows `position` and
+        // not `createdAt`.
+        const lessonA = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 3 },
+        });
+        const lessonB = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson B', position: 1 },
+        });
+        const lessonC = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson C', position: 2 },
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/lessons`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as LessonResponseBody[];
+        expect(body.map((l) => l.id)).toEqual([
+          lessonB.id,
+          lessonC.id,
+          lessonA.id,
+        ]);
+      });
     });
 
     describe('not found', () => {
@@ -357,6 +389,364 @@ describe('Course lessons (e2e)', () => {
     });
   });
 
+  describe('POST /courses/:courseId/lessons/reorder', () => {
+    describe('success', () => {
+      it('reorders 3 lessons and reflects the new order on a follow-up GET', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - basic reorder course',
+        });
+        const lessonA = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+        const lessonB = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson B', position: 2 },
+        });
+        const lessonC = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson C', position: 3 },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({
+            lessons: [
+              { id: lessonA.id, position: 3 },
+              { id: lessonB.id, position: 1 },
+              { id: lessonC.id, position: 2 },
+            ],
+          })
+          .expect(200);
+
+        const body = response.body as LessonResponseBody[];
+        expect(body.map((l) => l.id)).toEqual([
+          lessonB.id,
+          lessonC.id,
+          lessonA.id,
+        ]);
+
+        const getResponse = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/lessons`)
+          .set('x-user-id', adminId)
+          .expect(200);
+        const getBody = getResponse.body as LessonResponseBody[];
+        expect(getBody.map((l) => l.id)).toEqual([
+          lessonB.id,
+          lessonC.id,
+          lessonA.id,
+        ]);
+      });
+
+      it('applies every changed position atomically when reordering 4+ lessons at once', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - multiple lessons course',
+        });
+        const lesson1 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1', position: 1 },
+        });
+        const lesson2 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 2', position: 2 },
+        });
+        const lesson3 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 3', position: 3 },
+        });
+        const lesson4 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 4', position: 4 },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({
+            lessons: [
+              { id: lesson1.id, position: 4 },
+              { id: lesson2.id, position: 3 },
+              { id: lesson3.id, position: 2 },
+              { id: lesson4.id, position: 1 },
+            ],
+          })
+          .expect(200);
+
+        const getResponse = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/lessons`)
+          .set('x-user-id', adminId)
+          .expect(200);
+        const getBody = getResponse.body as LessonResponseBody[];
+        expect(getBody.map((l) => l.id)).toEqual([
+          lesson4.id,
+          lesson3.id,
+          lesson2.id,
+          lesson1.id,
+        ]);
+      });
+    });
+
+    describe('validation failures', () => {
+      let courseId: string;
+      let lessonId: string;
+
+      beforeAll(async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - validation failures course',
+        });
+        courseId = course.id;
+        const lesson = await prisma.lesson.create({
+          data: { courseId, title: 'Lesson 1', position: 1 },
+        });
+        lessonId = lesson.id;
+      });
+
+      it('rejects an empty lessons array', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [] })
+          .expect(400);
+      });
+
+      it('rejects a payload missing the lessons field entirely', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({})
+          .expect(400);
+      });
+
+      it('rejects an item with a non-integer position', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: lessonId, position: 1.5 }] })
+          .expect(400);
+      });
+
+      it('rejects an item with position < 1', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: lessonId, position: 0 }] })
+          .expect(400);
+      });
+
+      it('rejects an item with a missing id', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ position: 1 }] })
+          .expect(400);
+      });
+
+      it('rejects an item with an empty id', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: '', position: 1 }] })
+          .expect(400);
+      });
+
+      it('rejects an item with an extraneous field', async () => {
+        await request(app.getHttpServer())
+          .post(`/courses/${courseId}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: lessonId, position: 1, courseId: 'x' }] })
+          .expect(400);
+      });
+
+      it('rejects a payload with duplicate positions, and leaves lesson positions unchanged', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - duplicate positions course',
+        });
+        const lessonA = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+        const lessonB = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson B', position: 2 },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({
+            lessons: [
+              { id: lessonA.id, position: 1 },
+              { id: lessonB.id, position: 1 },
+            ],
+          })
+          .expect(400);
+
+        const persistedA = await prisma.lesson.findUnique({
+          where: { id: lessonA.id },
+        });
+        const persistedB = await prisma.lesson.findUnique({
+          where: { id: lessonB.id },
+        });
+        expect(persistedA?.position).toBe(1);
+        expect(persistedB?.position).toBe(2);
+      });
+
+      it("rejects a payload that omits some of the course's lessons, and leaves lesson positions unchanged", async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - partial payload course',
+        });
+        const lessonA = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+        const lessonB = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson B', position: 2 },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: lessonA.id, position: 2 }] })
+          .expect(400);
+
+        const persistedA = await prisma.lesson.findUnique({
+          where: { id: lessonA.id },
+        });
+        const persistedB = await prisma.lesson.findUnique({
+          where: { id: lessonB.id },
+        });
+        expect(persistedA?.position).toBe(1);
+        expect(persistedB?.position).toBe(2);
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 for a non-existent courseId', async () => {
+        await request(app.getHttpServer())
+          .post('/courses/nonexistent-course-id/lessons/reorder')
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: 'some-lesson-id', position: 1 }] })
+          .expect(404);
+      });
+
+      it('returns 404 for a payload id that does not exist at all, and leaves existing lesson positions unchanged', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - unknown lesson id course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({ lessons: [{ id: 'nonexistent-lesson-id', position: 1 }] })
+          .expect(404);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.position).toBe(1);
+      });
+
+      it('returns 404 (no cross-course leak) when a payload id belongs to a different course, and leaves that lesson unmodified', async () => {
+        const courseA = await createCourse({
+          title: 'Reorder lessons e2e - course A',
+        });
+        const courseB = await createCourse({
+          title: 'Reorder lessons e2e - course B',
+        });
+        const lessonInA = await prisma.lesson.create({
+          data: {
+            courseId: courseA.id,
+            title: 'Lesson in course A',
+            position: 1,
+          },
+        });
+        const lessonInB = await prisma.lesson.create({
+          data: {
+            courseId: courseB.id,
+            title: 'Lesson in course B',
+            position: 1,
+          },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${courseA.id}/lessons/reorder`)
+          .set('x-user-id', adminId)
+          .send({
+            lessons: [
+              { id: lessonInA.id, position: 1 },
+              { id: lessonInB.id, position: 2 },
+            ],
+          })
+          .expect(404);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lessonInB.id },
+        });
+        expect(persisted?.courseId).toBe(courseB.id);
+        expect(persisted?.position).toBe(1);
+      });
+    });
+
+    describe('authn/authz failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing, leaving positions unchanged', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - missing header course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+
+        const response = await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .send({ lessons: [{ id: lesson.id, position: 1 }] })
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/lessons/reorder`,
+          timestamp: expect.any(String) as string,
+        });
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.position).toBe(1);
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - unknown user course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .send({ lessons: [{ id: lesson.id, position: 1 }] })
+          .expect(401);
+      });
+
+      it('returns 403 for a non-admin user and leaves positions unchanged', async () => {
+        const course = await createCourse({
+          title: 'Reorder lessons e2e - non-admin course',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson A', position: 1 },
+        });
+
+        await request(app.getHttpServer())
+          .post(`/courses/${course.id}/lessons/reorder`)
+          .set('x-user-id', nonAdminId)
+          .send({ lessons: [{ id: lesson.id, position: 1 }] })
+          .expect(403);
+
+        const persisted = await prisma.lesson.findUnique({
+          where: { id: lesson.id },
+        });
+        expect(persisted?.position).toBe(1);
+      });
+    });
+  });
+
   describe('GET /courses/:courseId/lessons/:lessonId', () => {
     describe('success', () => {
       it('returns 200 with the exact persisted lesson fields', async () => {
@@ -382,6 +772,7 @@ describe('Course lessons (e2e)', () => {
           courseId: course.id,
           title: 'Lesson 1',
           description: 'Details',
+          position: 0,
           createdAt: lesson.createdAt.toISOString(),
           updatedAt: lesson.updatedAt.toISOString(),
         });
@@ -850,6 +1241,7 @@ describe('Course lessons (e2e)', () => {
           courseId: course.id,
           title: 'Lesson to delete',
           description: 'Details',
+          position: 0,
           createdAt: lesson.createdAt.toISOString(),
           updatedAt: lesson.updatedAt.toISOString(),
         });
@@ -896,6 +1288,7 @@ describe('Course lessons (e2e)', () => {
             courseId: course.id,
             title: lesson1.title,
             description: lesson1.description,
+            position: lesson1.position,
             createdAt: lesson1.createdAt.toISOString(),
             updatedAt: lesson1.updatedAt.toISOString(),
           },
@@ -904,6 +1297,7 @@ describe('Course lessons (e2e)', () => {
             courseId: course.id,
             title: lesson3.title,
             description: lesson3.description,
+            position: lesson3.position,
             createdAt: lesson3.createdAt.toISOString(),
             updatedAt: lesson3.updatedAt.toISOString(),
           },

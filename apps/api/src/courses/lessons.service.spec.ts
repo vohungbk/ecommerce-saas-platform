@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { LessonsService } from './lessons.service';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,7 +13,9 @@ describe('LessonsService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
       delete: jest.Mock;
+      aggregate: jest.Mock;
     };
+    $transaction: jest.Mock;
   };
   let coursesService: { findOne: jest.Mock };
   let service: LessonsService;
@@ -36,7 +38,18 @@ describe('LessonsService', () => {
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
         delete: jest.fn().mockResolvedValue({}),
+        aggregate: jest.fn().mockResolvedValue({ _max: { position: null } }),
       },
+      // Supports both the interactive form (`$transaction(async (tx) => ...)`,
+      // used by `create`) and the array form (`$transaction([...])`, used by
+      // `reorder`) — `tx` is the same mock `prisma.lesson` object in the
+      // interactive case, so assertions can target `prisma.lesson.*` either way.
+      $transaction: jest.fn((arg: unknown) => {
+        if (typeof arg === 'function') {
+          return (arg as (tx: unknown) => unknown)(prisma);
+        }
+        return Promise.all(arg as unknown[]);
+      }),
     };
     coursesService = {
       findOne: jest.fn().mockResolvedValue(existingCourse),
@@ -54,11 +67,16 @@ describe('LessonsService', () => {
       await service.create('course-1', dto);
 
       expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
+      expect(prisma.lesson.aggregate).toHaveBeenCalledWith({
+        where: { courseId: 'course-1' },
+        _max: { position: true },
+      });
       expect(prisma.lesson.create).toHaveBeenCalledWith({
         data: {
           courseId: 'course-1',
           title: 'Lesson 1',
           description: undefined,
+          position: 1,
         },
       });
     });
@@ -76,8 +94,35 @@ describe('LessonsService', () => {
           courseId: 'course-1',
           title: 'Lesson 1',
           description: 'A first lesson',
+          position: 1,
         },
       });
+    });
+
+    it('assigns position 1 when the course has no lessons yet (_max.position is null)', async () => {
+      prisma.lesson.aggregate.mockResolvedValue({ _max: { position: null } });
+      const dto = { title: 'Lesson 1' } as CreateLessonDto;
+
+      await service.create('course-1', dto);
+
+      expect(prisma.lesson.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ position: 1 }) as unknown,
+        }),
+      );
+    });
+
+    it('assigns position as max + 1 when the course already has lessons', async () => {
+      prisma.lesson.aggregate.mockResolvedValue({ _max: { position: 4 } });
+      const dto = { title: 'Lesson 5' } as CreateLessonDto;
+
+      await service.create('course-1', dto);
+
+      expect(prisma.lesson.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ position: 5 }) as unknown,
+        }),
+      );
     });
 
     it('throws NotFoundException and never calls prisma.lesson.create when the course does not exist', async () => {
@@ -94,7 +139,7 @@ describe('LessonsService', () => {
   });
 
   describe('findAllForCourse', () => {
-    it('resolves the course first, then queries lessons for that course ordered by createdAt/id ascending', async () => {
+    it('resolves the course first, then queries lessons for that course ordered by position/createdAt/id ascending', async () => {
       const lessons = [{ id: 'lesson-1' }, { id: 'lesson-2' }];
       prisma.lesson.findMany.mockResolvedValue(lessons);
 
@@ -103,7 +148,7 @@ describe('LessonsService', () => {
       expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
       expect(prisma.lesson.findMany).toHaveBeenCalledWith({
         where: { courseId: 'course-1' },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
       });
       expect(result).toEqual(lessons);
     });
@@ -344,6 +389,143 @@ describe('LessonsService', () => {
         service.remove('course-1', 'lesson-from-other-course'),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.lesson.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reorder', () => {
+    const lessonA = { id: 'lesson-a', position: 1 };
+    const lessonB = { id: 'lesson-b', position: 2 };
+    const lessonC = { id: 'lesson-c', position: 3 };
+
+    beforeEach(() => {
+      prisma.lesson.findMany.mockResolvedValue([
+        { id: lessonA.id },
+        { id: lessonB.id },
+        { id: lessonC.id },
+      ]);
+    });
+
+    it('resolves the course first, before validating or persisting anything', async () => {
+      const dto = {
+        lessons: [
+          { id: lessonA.id, position: 3 },
+          { id: lessonB.id, position: 1 },
+          { id: lessonC.id, position: 2 },
+        ],
+      };
+
+      await service.reorder('course-1', dto);
+
+      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
+    });
+
+    it('persists a single lesson move via prisma.lesson.update inside a transaction, then returns the course lessons in their new order', async () => {
+      const dto = {
+        lessons: [{ id: lessonA.id, position: 2 }],
+      };
+      prisma.lesson.findMany.mockResolvedValueOnce([{ id: lessonA.id }]);
+      const reordered = [{ id: lessonA.id, position: 2 }];
+      prisma.lesson.findMany.mockResolvedValueOnce(reordered);
+
+      const result = await service.reorder('course-1', dto);
+
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: lessonA.id },
+        data: { position: 2 },
+      });
+      expect(result).toEqual(reordered);
+    });
+
+    it('persists every lesson move in the payload when reordering multiple lessons at once', async () => {
+      const dto = {
+        lessons: [
+          { id: lessonA.id, position: 3 },
+          { id: lessonB.id, position: 1 },
+          { id: lessonC.id, position: 2 },
+        ],
+      };
+
+      await service.reorder('course-1', dto);
+
+      expect(prisma.lesson.update).toHaveBeenCalledTimes(3);
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: lessonA.id },
+        data: { position: 3 },
+      });
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: lessonB.id },
+        data: { position: 1 },
+      });
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: lessonC.id },
+        data: { position: 2 },
+      });
+    });
+
+    it('throws BadRequestException and never calls prisma.lesson.update when the payload has a duplicate lesson id', async () => {
+      const dto = {
+        lessons: [
+          { id: lessonA.id, position: 1 },
+          { id: lessonA.id, position: 2 },
+        ],
+      };
+
+      await expect(service.reorder('course-1', dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException and never calls prisma.lesson.update when the payload has a duplicate position', async () => {
+      const dto = {
+        lessons: [
+          { id: lessonA.id, position: 1 },
+          { id: lessonB.id, position: 1 },
+        ],
+      };
+
+      await expect(service.reorder('course-1', dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException and never calls prisma.lesson.update when a payload id does not belong to this course', async () => {
+      prisma.lesson.findMany.mockResolvedValue([{ id: lessonA.id }]);
+      const dto = {
+        lessons: [{ id: 'lesson-from-other-course', position: 1 }],
+      };
+
+      await expect(service.reorder('course-1', dto)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+
+    it("throws BadRequestException and never calls prisma.lesson.update when the payload omits some of the course's lessons", async () => {
+      const dto = {
+        lessons: [{ id: lessonA.id, position: 1 }],
+      };
+
+      await expect(service.reorder('course-1', dto)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException and never calls prisma.lesson.findMany when the course does not exist', async () => {
+      coursesService.findOne.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+      const dto = {
+        lessons: [{ id: lessonA.id, position: 1 }],
+      };
+
+      await expect(service.reorder('missing-course', dto)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.lesson.findMany).not.toHaveBeenCalled();
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
     });
   });
 });
