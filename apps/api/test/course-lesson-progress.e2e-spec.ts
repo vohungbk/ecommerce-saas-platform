@@ -575,6 +575,253 @@ describe('Course lesson progress (e2e)', () => {
     });
   });
 
+  describe('GET /courses/:courseId/progress/summary', () => {
+    describe('success', () => {
+      it('returns 200 with 0% completion when the caller has no completed lessons', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - 0% course',
+        });
+        await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+        await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 2' },
+        });
+        await enroll(course.id, userAId);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          totalLessons: 2,
+          completedLessons: 0,
+          remainingLessons: 2,
+          completionPercentage: 0,
+        });
+      });
+
+      it('returns 200 with 50% completion when 2 of 4 lessons are completed', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - 50% course',
+        });
+        const lesson1 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+        const lesson2 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 2' },
+        });
+        await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 3' },
+        });
+        await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 4' },
+        });
+        await enroll(course.id, userAId);
+
+        await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson1.id}/progress`)
+          .set('x-user-id', userAId)
+          .send({ completed: true })
+          .expect(200);
+        await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson2.id}/progress`)
+          .set('x-user-id', userAId)
+          .send({ completed: true })
+          .expect(200);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          totalLessons: 4,
+          completedLessons: 2,
+          remainingLessons: 2,
+          completionPercentage: 50,
+        });
+      });
+
+      it('returns 200 with 100% completion when all lessons are completed', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - 100% course',
+        });
+        const lesson1 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+        const lesson2 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 2' },
+        });
+        await enroll(course.id, userAId);
+
+        await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson1.id}/progress`)
+          .set('x-user-id', userAId)
+          .send({ completed: true })
+          .expect(200);
+        await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson2.id}/progress`)
+          .set('x-user-id', userAId)
+          .send({ completed: true })
+          .expect(200);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          totalLessons: 2,
+          completedLessons: 2,
+          remainingLessons: 0,
+          completionPercentage: 100,
+        });
+      });
+
+      it('returns 200 with all-zero totals (not NaN/500) for a zero-lesson course', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - zero-lesson course',
+        });
+        await enroll(course.id, userAId);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          totalLessons: 0,
+          completedLessons: 0,
+          remainingLessons: 0,
+          completionPercentage: 0,
+        });
+      });
+    });
+
+    describe('not found', () => {
+      it('returns 404 ("Enrollment not found") when the caller is not enrolled', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - not enrolled course',
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.message).toEqual(expect.stringContaining('Enrollment'));
+      });
+
+      it('returns 404 ("Course not found") for a non-existent courseId', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses/nonexistent-course-id/progress/summary')
+          .set('x-user-id', userAId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.message).toEqual(expect.stringContaining('Course'));
+      });
+
+      it('returns 404 ("Course not found") for a soft-deleted course, even if the caller is enrolled', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - soft-deleted course',
+        });
+        await enroll(course.id, userAId);
+        await prisma.course.update({
+          where: { id: course.id },
+          data: { deletedAt: new Date() },
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.message).toEqual(expect.stringContaining('Course'));
+      });
+    });
+
+    describe('user isolation', () => {
+      it("user B's summary reflects only user B's own completions, not user A's", async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - isolation course',
+        });
+        const lesson1 = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+        await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 2' },
+        });
+        await enroll(course.id, userAId);
+        await enroll(course.id, userBId);
+
+        await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson1.id}/progress`)
+          .set('x-user-id', userAId)
+          .send({ completed: true })
+          .expect(200);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userBId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          totalLessons: 2,
+          completedLessons: 0,
+          remainingLessons: 2,
+          completionPercentage: 0,
+        });
+      });
+    });
+
+    describe('authn failures', () => {
+      it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
+        const course = await createCourse();
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .expect(401);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 401,
+          error: expect.any(String) as string,
+          message: expect.any(String) as string,
+          path: `/courses/${course.id}/progress/summary`,
+          timestamp: expect.any(String) as string,
+        });
+      });
+
+      it('returns 401 when the x-user-id header does not match an existing user', async () => {
+        const course = await createCourse();
+
+        await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', 'nonexistent-user-id')
+          .expect(401);
+      });
+    });
+
+    describe('validation failures', () => {
+      it('returns 400 for a whitespace-only courseId', async () => {
+        await request(app.getHttpServer())
+          .get('/courses/%20%20/progress/summary')
+          .set('x-user-id', userAId)
+          .expect(400);
+      });
+    });
+  });
+
   describe('database constraint', () => {
     it('rejects a direct duplicate (userId, lessonId) insert at the DB level with a P2002 error', async () => {
       const course = await createCourse({

@@ -10,7 +10,12 @@ describe('ProgressService', () => {
     lessonProgress: {
       upsert: jest.Mock;
       findMany: jest.Mock;
+      count: jest.Mock;
     };
+    lesson: {
+      count: jest.Mock;
+    };
+    $transaction: jest.Mock;
   };
   let coursesService: { findOne: jest.Mock };
   let lessonsService: { findOne: jest.Mock };
@@ -49,7 +54,14 @@ describe('ProgressService', () => {
       lessonProgress: {
         upsert: jest.fn(),
         findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn(),
       },
+      lesson: {
+        count: jest.fn(),
+      },
+      $transaction: jest.fn(
+        (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
+      ),
     };
     coursesService = { findOne: jest.fn().mockResolvedValue(course) };
     lessonsService = { findOne: jest.fn().mockResolvedValue(lesson) };
@@ -176,6 +188,91 @@ describe('ProgressService', () => {
       const result = await service.findAllForCourse('course-1', 'user-1');
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('getSummary', () => {
+    it('propagates NotFoundException from CoursesService.findOne and never checks enrollment or counts', async () => {
+      coursesService.findOne.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+
+      await expect(
+        service.getSummary('missing-course', 'user-1'),
+      ).rejects.toThrow(new NotFoundException('Course not found'));
+      expect(enrollmentsService.findForUserAndCourse).not.toHaveBeenCalled();
+      expect(prisma.lesson.count).not.toHaveBeenCalled();
+      expect(prisma.lessonProgress.count).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException("Enrollment not found") when the caller is not enrolled, and never counts', async () => {
+      enrollmentsService.findForUserAndCourse.mockResolvedValue(null);
+
+      await expect(service.getSummary('course-1', 'user-1')).rejects.toThrow(
+        new NotFoundException('Enrollment not found'),
+      );
+      expect(prisma.lesson.count).not.toHaveBeenCalled();
+      expect(prisma.lessonProgress.count).not.toHaveBeenCalled();
+    });
+
+    it('returns totals/percentage for partial completion, scoped to the caller and the course', async () => {
+      prisma.lesson.count.mockResolvedValue(4);
+      prisma.lessonProgress.count.mockResolvedValue(2);
+
+      const result = await service.getSummary('course-1', 'user-1');
+
+      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
+      expect(enrollmentsService.findForUserAndCourse).toHaveBeenCalledWith(
+        'user-1',
+        'course-1',
+      );
+      expect(prisma.lesson.count).toHaveBeenCalledWith({
+        where: { courseId: 'course-1' },
+      });
+      expect(prisma.lessonProgress.count).toHaveBeenCalledWith({
+        where: {
+          userId: 'user-1',
+          completed: true,
+          lesson: { courseId: 'course-1' },
+        },
+      });
+      expect(result).toEqual({
+        courseId: 'course-1',
+        totalLessons: 4,
+        completedLessons: 2,
+        remainingLessons: 2,
+        completionPercentage: 50,
+      });
+    });
+
+    it('returns all-zero totals with completionPercentage 0 (no division by zero) for a zero-lesson course', async () => {
+      prisma.lesson.count.mockResolvedValue(0);
+      prisma.lessonProgress.count.mockResolvedValue(0);
+
+      const result = await service.getSummary('course-1', 'user-1');
+
+      expect(result).toEqual({
+        courseId: 'course-1',
+        totalLessons: 0,
+        completedLessons: 0,
+        remainingLessons: 0,
+        completionPercentage: 0,
+      });
+    });
+
+    it('returns completionPercentage 100 when every lesson is completed', async () => {
+      prisma.lesson.count.mockResolvedValue(4);
+      prisma.lessonProgress.count.mockResolvedValue(4);
+
+      const result = await service.getSummary('course-1', 'user-1');
+
+      expect(result).toEqual({
+        courseId: 'course-1',
+        totalLessons: 4,
+        completedLessons: 4,
+        remainingLessons: 0,
+        completionPercentage: 100,
+      });
     });
   });
 });

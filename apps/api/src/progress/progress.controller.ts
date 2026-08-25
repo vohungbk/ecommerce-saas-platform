@@ -109,4 +109,40 @@ export class ProgressController {
   ) {
     return this.progressService.findAllForCourse(params.courseId, user.id);
   }
+
+  @Get('progress/summary')
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    summary: "Retrieve the caller's own progress summary for a course",
+    description:
+      "Returns the authenticated caller's own course-level progress summary (total lessons, completed lessons, remaining lessons, completion percentage) for the given course. The course must exist and the caller must be enrolled in it. Requires the caller to be an authenticated user (development-only x-user-id header shim, see AuthGuard) — any role. Never includes another user's progress.",
+  })
+  @ApiParam({ name: 'courseId', description: 'Course id' })
+  @ApiResponse({
+    status: 200,
+    description: "The caller's progress summary for the course",
+    schema: {
+      type: 'object',
+      properties: {
+        courseId: { type: 'string' },
+        totalLessons: { type: 'number' },
+        completedLessons: { type: 'number' },
+        remainingLessons: { type: 'number' },
+        completionPercentage: { type: 'number' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Course not found, or the caller is not enrolled in this course',
+  })
+  getSummary(
+    @Param() params: FindCourseLessonsParamsDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.progressService.getSummary(params.courseId, user.id);
+  }
 }

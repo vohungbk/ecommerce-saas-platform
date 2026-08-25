@@ -5,6 +5,14 @@ import { CoursesService } from '../courses/courses.service';
 import { LessonsService } from '../courses/lessons.service';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
 
+export interface CourseProgressSummary {
+  courseId: string;
+  totalLessons: number;
+  completedLessons: number;
+  remainingLessons: number;
+  completionPercentage: number;
+}
+
 @Injectable()
 export class ProgressService {
   constructor(
@@ -57,5 +65,41 @@ export class ProgressService {
       where: { userId, lesson: { courseId } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
+  }
+
+  async getSummary(
+    courseId: string,
+    userId: string,
+  ): Promise<CourseProgressSummary> {
+    await this.coursesService.findOne(courseId);
+
+    const enrollment = await this.enrollmentsService.findForUserAndCourse(
+      userId,
+      courseId,
+    );
+    if (!enrollment) {
+      throw new NotFoundException('Enrollment not found');
+    }
+
+    const [totalLessons, completedLessons] = await this.prisma.$transaction([
+      this.prisma.lesson.count({ where: { courseId } }),
+      this.prisma.lessonProgress.count({
+        where: { userId, completed: true, lesson: { courseId } },
+      }),
+    ]);
+
+    const remainingLessons = totalLessons - completedLessons;
+    const completionPercentage =
+      totalLessons === 0
+        ? 0
+        : Math.round((completedLessons / totalLessons) * 100);
+
+    return {
+      courseId,
+      totalLessons,
+      completedLessons,
+      remainingLessons,
+      completionPercentage,
+    };
   }
 }
