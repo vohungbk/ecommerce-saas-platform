@@ -125,6 +125,33 @@ describe('EnrollmentsService', () => {
     });
   });
 
+  describe('findForUserAndCourse', () => {
+    it('queries the enrollment by the composite userId_courseId unique key', async () => {
+      const enrollment = {
+        id: 'enrollment-1',
+        userId: 'user-1',
+        courseId: 'course-1',
+        createdAt: new Date(),
+      };
+      prisma.enrollment.findUnique.mockResolvedValue(enrollment);
+
+      const result = await service.findForUserAndCourse('user-1', 'course-1');
+
+      expect(prisma.enrollment.findUnique).toHaveBeenCalledWith({
+        where: { userId_courseId: { userId: 'user-1', courseId: 'course-1' } },
+      });
+      expect(result).toEqual(enrollment);
+    });
+
+    it('returns null when no enrollment exists for the (userId, courseId) pair', async () => {
+      prisma.enrollment.findUnique.mockResolvedValue(null);
+
+      const result = await service.findForUserAndCourse('user-1', 'course-1');
+
+      expect(result).toBeNull();
+    });
+  });
+
   describe('findAllForUser', () => {
     it('queries enrollments scoped strictly to the given userId, including the nested course', async () => {
       const enrollments = [

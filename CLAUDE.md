@@ -60,6 +60,7 @@ apps/
       auth/       # AdminGuard/AuthGuard (dev-only x-user-id shim), CurrentUser decorator
       courses/    # POST /courses (admin-only)
       enrollments/ # POST /courses/:courseId/enroll, GET /enrollments (any authenticated user)
+      progress/   # PUT /courses/:courseId/lessons/:lessonId/progress, GET /courses/:courseId/progress (any authenticated, enrolled user)
       common/     # cross-cutting Nest pieces (e.g. global exception filter)
 packages/         # Shared packages — created only when a genuine cross-app need exists
 prisma/

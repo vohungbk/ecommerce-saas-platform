@@ -46,6 +46,15 @@ export class EnrollmentsService {
     }
   }
 
+  findForUserAndCourse(
+    userId: string,
+    courseId: string,
+  ): Promise<Enrollment | null> {
+    return this.prisma.enrollment.findUnique({
+      where: { userId_courseId: { userId, courseId } },
+    });
+  }
+
   findAllForUser(userId: string) {
     return this.prisma.enrollment.findMany({
       where: { userId },

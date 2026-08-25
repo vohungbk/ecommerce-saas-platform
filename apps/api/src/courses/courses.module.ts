@@ -9,6 +9,6 @@ import { LessonsService } from './lessons.service';
   imports: [AuthModule],
   controllers: [CoursesController, LessonsController],
   providers: [CoursesService, LessonsService],
-  exports: [CoursesService],
+  exports: [CoursesService, LessonsService],
 })
 export class CoursesModule {}
