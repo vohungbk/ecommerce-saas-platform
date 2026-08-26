@@ -1,7 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Injectable } from '@nestjs/common';
+import { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CoursesService } from '../courses/courses.service';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
 
 export interface CourseCompletionStatus {
@@ -14,7 +13,6 @@ export interface CourseCompletionStatus {
 export class CourseCompletionService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly coursesService: CoursesService,
     private readonly enrollmentsService: EnrollmentsService,
   ) {}
 
@@ -64,20 +62,12 @@ export class CourseCompletionService {
 
   async getStatus(
     courseId: string,
-    userId: string,
+    user: User,
   ): Promise<CourseCompletionStatus> {
-    await this.coursesService.findOne(courseId);
-
-    const enrollment = await this.enrollmentsService.findForUserAndCourse(
-      userId,
-      courseId,
-    );
-    if (!enrollment) {
-      throw new NotFoundException('Enrollment not found');
-    }
+    await this.enrollmentsService.assertLearnerAccessToCourse(user, courseId);
 
     const record = await this.prisma.courseCompletion.findUnique({
-      where: { userId_courseId: { userId, courseId } },
+      where: { userId_courseId: { userId: user.id, courseId } },
     });
 
     return {

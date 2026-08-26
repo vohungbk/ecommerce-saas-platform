@@ -1,6 +1,5 @@
-import { NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { CoursesService } from '../courses/courses.service';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Prisma, User } from '@prisma/client';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CourseCompletionService } from './course-completion.service';
@@ -19,8 +18,7 @@ describe('CourseCompletionService', () => {
     };
     $transaction: jest.Mock;
   };
-  let coursesService: { findOne: jest.Mock };
-  let enrollmentsService: { findForUserAndCourse: jest.Mock };
+  let enrollmentsService: { assertLearnerAccessToCourse: jest.Mock };
   let service: CourseCompletionService;
 
   const course = {
@@ -33,11 +31,12 @@ describe('CourseCompletionService', () => {
     deletedAt: null,
   };
 
-  const enrollment = {
-    id: 'enrollment-1',
-    userId: 'user-1',
-    courseId: 'course-1',
+  const user: User = {
+    id: 'user-1',
+    email: 'learner@example.com',
+    role: 'USER',
     createdAt: new Date(),
+    updatedAt: new Date(),
   };
 
   const knownRequestError = (code: string) => {
@@ -64,13 +63,11 @@ describe('CourseCompletionService', () => {
         (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
       ),
     };
-    coursesService = { findOne: jest.fn().mockResolvedValue(course) };
     enrollmentsService = {
-      findForUserAndCourse: jest.fn().mockResolvedValue(enrollment),
+      assertLearnerAccessToCourse: jest.fn().mockResolvedValue(course),
     };
     service = new CourseCompletionService(
       prisma as unknown as PrismaService,
-      coursesService as unknown as CoursesService,
       enrollmentsService as unknown as EnrollmentsService,
     );
   });
@@ -163,23 +160,35 @@ describe('CourseCompletionService', () => {
   });
 
   describe('getStatus', () => {
-    it('propagates NotFoundException from CoursesService.findOne and never checks enrollment or completion', async () => {
-      coursesService.findOne.mockRejectedValue(
+    it('propagates NotFoundException("Course not found") from assertLearnerAccessToCourse and never checks completion', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
         new NotFoundException('Course not found'),
       );
 
-      await expect(
-        service.getStatus('missing-course', 'user-1'),
-      ).rejects.toThrow(new NotFoundException('Course not found'));
-      expect(enrollmentsService.findForUserAndCourse).not.toHaveBeenCalled();
+      await expect(service.getStatus('missing-course', user)).rejects.toThrow(
+        new NotFoundException('Course not found'),
+      );
       expect(prisma.courseCompletion.findUnique).not.toHaveBeenCalled();
     });
 
-    it('throws NotFoundException("Enrollment not found") when the caller is not enrolled', async () => {
-      enrollmentsService.findForUserAndCourse.mockResolvedValue(null);
-
-      await expect(service.getStatus('course-1', 'user-1')).rejects.toThrow(
+    it('propagates NotFoundException("Enrollment not found") from assertLearnerAccessToCourse', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
         new NotFoundException('Enrollment not found'),
+      );
+
+      await expect(service.getStatus('course-1', user)).rejects.toThrow(
+        new NotFoundException('Enrollment not found'),
+      );
+      expect(prisma.courseCompletion.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('propagates ForbiddenException from assertLearnerAccessToCourse when the course is not published', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
+        new ForbiddenException('Course is not currently available'),
+      );
+
+      await expect(service.getStatus('course-1', user)).rejects.toThrow(
+        new ForbiddenException('Course is not currently available'),
       );
       expect(prisma.courseCompletion.findUnique).not.toHaveBeenCalled();
     });
@@ -187,8 +196,11 @@ describe('CourseCompletionService', () => {
     it('returns completed: false, completedAt: null when no CourseCompletion row exists', async () => {
       prisma.courseCompletion.findUnique.mockResolvedValue(null);
 
-      const result = await service.getStatus('course-1', 'user-1');
+      const result = await service.getStatus('course-1', user);
 
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(user, 'course-1');
       expect(result).toEqual({
         courseId: 'course-1',
         completed: false,
@@ -205,12 +217,28 @@ describe('CourseCompletionService', () => {
         completedAt,
       });
 
-      const result = await service.getStatus('course-1', 'user-1');
+      const result = await service.getStatus('course-1', user);
 
       expect(result).toEqual({
         courseId: 'course-1',
         completed: true,
         completedAt,
+      });
+    });
+
+    it('succeeds for an ADMIN caller on a course they are not enrolled in', async () => {
+      const admin: User = { ...user, id: 'admin-1', role: 'ADMIN' };
+      prisma.courseCompletion.findUnique.mockResolvedValue(null);
+
+      const result = await service.getStatus('course-1', admin);
+
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(admin, 'course-1');
+      expect(result).toEqual({
+        courseId: 'course-1',
+        completed: false,
+        completedAt: null,
       });
     });
   });

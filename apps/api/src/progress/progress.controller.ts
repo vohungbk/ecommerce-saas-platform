@@ -52,6 +52,11 @@ export class ProgressController {
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
   @ApiResponse({
+    status: 403,
+    description:
+      'The caller is enrolled but the course is not currently PUBLISHED (ADMIN callers bypass this check)',
+  })
+  @ApiResponse({
     status: 404,
     description:
       'Course not found, lesson not found (or belongs to a different course), or the caller is not enrolled in this course',
@@ -64,7 +69,7 @@ export class ProgressController {
     return this.progressService.markOrUpdate(
       params.courseId,
       params.lessonId,
-      user.id,
+      user,
       dto.completed,
     );
   }
@@ -99,6 +104,11 @@ export class ProgressController {
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
   @ApiResponse({
+    status: 403,
+    description:
+      'The caller is enrolled but the course is not currently PUBLISHED (ADMIN callers bypass this check)',
+  })
+  @ApiResponse({
     status: 404,
     description:
       'Course not found, or the caller is not enrolled in this course',
@@ -107,7 +117,7 @@ export class ProgressController {
     @Param() params: FindCourseLessonsParamsDto,
     @CurrentUser() user: User,
   ) {
-    return this.progressService.findAllForCourse(params.courseId, user.id);
+    return this.progressService.findAllForCourse(params.courseId, user);
   }
 
   @Get('progress/summary')
@@ -135,6 +145,11 @@ export class ProgressController {
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
   @ApiResponse({
+    status: 403,
+    description:
+      'The caller is enrolled but the course is not currently PUBLISHED (ADMIN callers bypass this check)',
+  })
+  @ApiResponse({
     status: 404,
     description:
       'Course not found, or the caller is not enrolled in this course',
@@ -143,7 +158,7 @@ export class ProgressController {
     @Param() params: FindCourseLessonsParamsDto,
     @CurrentUser() user: User,
   ) {
-    return this.progressService.getSummary(params.courseId, user.id);
+    return this.progressService.getSummary(params.courseId, user);
   }
 
   @Get('completion')
@@ -173,6 +188,11 @@ export class ProgressController {
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
   @ApiResponse({
+    status: 403,
+    description:
+      'The caller is enrolled but the course is not currently PUBLISHED (ADMIN callers bypass this check)',
+  })
+  @ApiResponse({
     status: 404,
     description:
       'Course not found, or the caller is not enrolled in this course',
@@ -181,6 +201,6 @@ export class ProgressController {
     @Param() params: FindCourseLessonsParamsDto,
     @CurrentUser() user: User,
   ) {
-    return this.progressService.getCompletionStatus(params.courseId, user.id);
+    return this.progressService.getCompletionStatus(params.courseId, user);
   }
 }

@@ -1,5 +1,9 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, User } from '@prisma/client';
 import { EnrollmentsService } from './enrollments.service';
 import { CoursesService } from '../courses/courses.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -192,6 +196,98 @@ describe('EnrollmentsService', () => {
       const result = await service.findAllForUser('user-1');
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('assertLearnerAccessToCourse', () => {
+    const learner: User = {
+      id: 'user-1',
+      email: 'learner@example.com',
+      role: 'USER',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const admin: User = {
+      id: 'admin-1',
+      email: 'admin@example.com',
+      role: 'ADMIN',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    it('returns the course for an enrolled learner and a PUBLISHED course', async () => {
+      prisma.enrollment.findUnique.mockResolvedValue({
+        id: 'enrollment-1',
+        userId: 'user-1',
+        courseId: 'course-1',
+        createdAt: new Date(),
+      });
+
+      const result = await service.assertLearnerAccessToCourse(
+        learner,
+        'course-1',
+      );
+
+      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
+      expect(prisma.enrollment.findUnique).toHaveBeenCalledWith({
+        where: { userId_courseId: { userId: 'user-1', courseId: 'course-1' } },
+      });
+      expect(result).toEqual(publishedCourse);
+    });
+
+    it('propagates NotFoundException from CoursesService.findOne and never checks enrollment', async () => {
+      coursesService.findOne.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+
+      await expect(
+        service.assertLearnerAccessToCourse(learner, 'missing-course'),
+      ).rejects.toThrow(new NotFoundException('Course not found'));
+      expect(prisma.enrollment.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException("Enrollment not found") when the learner is not enrolled', async () => {
+      prisma.enrollment.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.assertLearnerAccessToCourse(learner, 'course-1'),
+      ).rejects.toThrow(new NotFoundException('Enrollment not found'));
+    });
+
+    it('throws ForbiddenException when the learner is enrolled but the course is not PUBLISHED', async () => {
+      coursesService.findOne.mockResolvedValue({
+        ...publishedCourse,
+        status: 'DRAFT',
+      });
+      prisma.enrollment.findUnique.mockResolvedValue({
+        id: 'enrollment-1',
+        userId: 'user-1',
+        courseId: 'course-1',
+        createdAt: new Date(),
+      });
+
+      await expect(
+        service.assertLearnerAccessToCourse(learner, 'course-1'),
+      ).rejects.toThrow(
+        new ForbiddenException('Course is not currently available'),
+      );
+    });
+
+    it('bypasses both the enrollment and published checks for an ADMIN caller', async () => {
+      coursesService.findOne.mockResolvedValue({
+        ...publishedCourse,
+        status: 'DRAFT',
+      });
+      prisma.enrollment.findUnique.mockResolvedValue(null);
+
+      const result = await service.assertLearnerAccessToCourse(
+        admin,
+        'course-1',
+      );
+
+      expect(prisma.enrollment.findUnique).not.toHaveBeenCalled();
+      expect(result).toEqual({ ...publishedCourse, status: 'DRAFT' });
     });
   });
 });

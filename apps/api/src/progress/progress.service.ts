@@ -1,7 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { LessonProgress } from '@prisma/client';
+import { Injectable } from '@nestjs/common';
+import { LessonProgress, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CoursesService } from '../courses/courses.service';
 import { LessonsService } from '../courses/lessons.service';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
 import {
@@ -21,7 +20,6 @@ export interface CourseProgressSummary {
 export class ProgressService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly coursesService: CoursesService,
     private readonly lessonsService: LessonsService,
     private readonly enrollmentsService: EnrollmentsService,
     private readonly courseCompletionService: CourseCompletionService,
@@ -30,29 +28,24 @@ export class ProgressService {
   async markOrUpdate(
     courseId: string,
     lessonId: string,
-    userId: string,
+    user: User,
     completed: boolean,
   ): Promise<LessonProgress> {
     // Proves course exists, lesson exists, and lesson belongs to courseId
     // (throws NotFoundException('Course not found') / 'Lesson not found').
     await this.lessonsService.findOne(courseId, lessonId);
 
-    const enrollment = await this.enrollmentsService.findForUserAndCourse(
-      userId,
-      courseId,
-    );
-    if (!enrollment) {
-      throw new NotFoundException('Enrollment not found');
-    }
+    // Proves the caller is enrolled in a PUBLISHED course (or is an ADMIN).
+    await this.enrollmentsService.assertLearnerAccessToCourse(user, courseId);
 
     const progress = await this.prisma.lessonProgress.upsert({
-      where: { userId_lessonId: { userId, lessonId } },
-      create: { userId, lessonId, completed },
+      where: { userId_lessonId: { userId: user.id, lessonId } },
+      create: { userId: user.id, lessonId, completed },
       update: { completed },
     });
 
     if (completed) {
-      await this.courseCompletionService.recordIfComplete(courseId, userId);
+      await this.courseCompletionService.recordIfComplete(courseId, user.id);
     }
 
     return progress;
@@ -60,42 +53,26 @@ export class ProgressService {
 
   async findAllForCourse(
     courseId: string,
-    userId: string,
+    user: User,
   ): Promise<LessonProgress[]> {
-    await this.coursesService.findOne(courseId);
-
-    const enrollment = await this.enrollmentsService.findForUserAndCourse(
-      userId,
-      courseId,
-    );
-    if (!enrollment) {
-      throw new NotFoundException('Enrollment not found');
-    }
+    await this.enrollmentsService.assertLearnerAccessToCourse(user, courseId);
 
     return this.prisma.lessonProgress.findMany({
-      where: { userId, lesson: { courseId } },
+      where: { userId: user.id, lesson: { courseId } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
   }
 
   async getSummary(
     courseId: string,
-    userId: string,
+    user: User,
   ): Promise<CourseProgressSummary> {
-    await this.coursesService.findOne(courseId);
-
-    const enrollment = await this.enrollmentsService.findForUserAndCourse(
-      userId,
-      courseId,
-    );
-    if (!enrollment) {
-      throw new NotFoundException('Enrollment not found');
-    }
+    await this.enrollmentsService.assertLearnerAccessToCourse(user, courseId);
 
     const [totalLessons, completedLessons] = await this.prisma.$transaction([
       this.prisma.lesson.count({ where: { courseId } }),
       this.prisma.lessonProgress.count({
-        where: { userId, completed: true, lesson: { courseId } },
+        where: { userId: user.id, completed: true, lesson: { courseId } },
       }),
     ]);
 
@@ -116,8 +93,8 @@ export class ProgressService {
 
   getCompletionStatus(
     courseId: string,
-    userId: string,
+    user: User,
   ): Promise<CourseCompletionStatus> {
-    return this.courseCompletionService.getStatus(courseId, userId);
+    return this.courseCompletionService.getStatus(courseId, user);
   }
 }

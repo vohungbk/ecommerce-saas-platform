@@ -1,5 +1,5 @@
-import { NotFoundException } from '@nestjs/common';
-import { CoursesService } from '../courses/courses.service';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { User } from '@prisma/client';
 import { LessonsService } from '../courses/lessons.service';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,9 +18,8 @@ describe('ProgressService', () => {
     };
     $transaction: jest.Mock;
   };
-  let coursesService: { findOne: jest.Mock };
   let lessonsService: { findOne: jest.Mock };
-  let enrollmentsService: { findForUserAndCourse: jest.Mock };
+  let enrollmentsService: { assertLearnerAccessToCourse: jest.Mock };
   let courseCompletionService: { recordIfComplete: jest.Mock };
   let service: ProgressService;
 
@@ -44,11 +43,12 @@ describe('ProgressService', () => {
     updatedAt: new Date(),
   };
 
-  const enrollment = {
-    id: 'enrollment-1',
-    userId: 'user-1',
-    courseId: 'course-1',
+  const user: User = {
+    id: 'user-1',
+    email: 'learner@example.com',
+    role: 'USER',
     createdAt: new Date(),
+    updatedAt: new Date(),
   };
 
   beforeEach(() => {
@@ -65,17 +65,15 @@ describe('ProgressService', () => {
         (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
       ),
     };
-    coursesService = { findOne: jest.fn().mockResolvedValue(course) };
     lessonsService = { findOne: jest.fn().mockResolvedValue(lesson) };
     enrollmentsService = {
-      findForUserAndCourse: jest.fn().mockResolvedValue(enrollment),
+      assertLearnerAccessToCourse: jest.fn().mockResolvedValue(course),
     };
     courseCompletionService = {
       recordIfComplete: jest.fn().mockResolvedValue(undefined),
     };
     service = new ProgressService(
       prisma as unknown as PrismaService,
-      coursesService as unknown as CoursesService,
       lessonsService as unknown as LessonsService,
       enrollmentsService as unknown as EnrollmentsService,
       courseCompletionService as unknown as CourseCompletionService,
@@ -83,7 +81,7 @@ describe('ProgressService', () => {
   });
 
   describe('markOrUpdate', () => {
-    it('resolves the lesson, checks enrollment, then upserts the LessonProgress row', async () => {
+    it('resolves the lesson, checks access, then upserts the LessonProgress row', async () => {
       const persisted = {
         id: 'progress-1',
         userId: 'user-1',
@@ -97,7 +95,7 @@ describe('ProgressService', () => {
       const result = await service.markOrUpdate(
         'course-1',
         'lesson-1',
-        'user-1',
+        user,
         true,
       );
 
@@ -105,10 +103,9 @@ describe('ProgressService', () => {
         'course-1',
         'lesson-1',
       );
-      expect(enrollmentsService.findForUserAndCourse).toHaveBeenCalledWith(
-        'user-1',
-        'course-1',
-      );
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(user, 'course-1');
       expect(prisma.lessonProgress.upsert).toHaveBeenCalledWith({
         where: { userId_lessonId: { userId: 'user-1', lessonId: 'lesson-1' } },
         create: { userId: 'user-1', lessonId: 'lesson-1', completed: true },
@@ -127,7 +124,7 @@ describe('ProgressService', () => {
         updatedAt: new Date(),
       });
 
-      await service.markOrUpdate('course-1', 'lesson-1', 'user-1', true);
+      await service.markOrUpdate('course-1', 'lesson-1', user, true);
 
       expect(courseCompletionService.recordIfComplete).toHaveBeenCalledWith(
         'course-1',
@@ -145,37 +142,80 @@ describe('ProgressService', () => {
         updatedAt: new Date(),
       });
 
-      await service.markOrUpdate('course-1', 'lesson-1', 'user-1', false);
+      await service.markOrUpdate('course-1', 'lesson-1', user, false);
 
       expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
     });
 
-    it('propagates NotFoundException from LessonsService.findOne and never checks enrollment or upserts', async () => {
+    it('propagates NotFoundException from LessonsService.findOne and never checks access or upserts', async () => {
       lessonsService.findOne.mockRejectedValue(
         new NotFoundException('Lesson not found'),
       );
 
       await expect(
-        service.markOrUpdate('course-1', 'missing-lesson', 'user-1', true),
+        service.markOrUpdate('course-1', 'missing-lesson', user, true),
       ).rejects.toThrow(NotFoundException);
-      expect(enrollmentsService.findForUserAndCourse).not.toHaveBeenCalled();
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).not.toHaveBeenCalled();
       expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
       expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
     });
 
-    it('throws NotFoundException("Enrollment not found") when the caller is not enrolled, and never upserts', async () => {
-      enrollmentsService.findForUserAndCourse.mockResolvedValue(null);
+    it('propagates NotFoundException("Enrollment not found") from assertLearnerAccessToCourse, and never upserts', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
+        new NotFoundException('Enrollment not found'),
+      );
 
       await expect(
-        service.markOrUpdate('course-1', 'lesson-1', 'user-1', true),
+        service.markOrUpdate('course-1', 'lesson-1', user, true),
       ).rejects.toThrow(new NotFoundException('Enrollment not found'));
       expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
       expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
     });
+
+    it('propagates ForbiddenException from assertLearnerAccessToCourse when the course is not published, and never upserts', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
+        new ForbiddenException('Course is not currently available'),
+      );
+
+      await expect(
+        service.markOrUpdate('course-1', 'lesson-1', user, true),
+      ).rejects.toThrow(
+        new ForbiddenException('Course is not currently available'),
+      );
+      expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
+      expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
+    });
+
+    it('succeeds for an ADMIN caller even without enrollment (assertLearnerAccessToCourse bypass)', async () => {
+      const admin: User = { ...user, id: 'admin-1', role: 'ADMIN' };
+      const persisted = {
+        id: 'progress-1',
+        userId: 'admin-1',
+        lessonId: 'lesson-1',
+        completed: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      prisma.lessonProgress.upsert.mockResolvedValue(persisted);
+
+      const result = await service.markOrUpdate(
+        'course-1',
+        'lesson-1',
+        admin,
+        true,
+      );
+
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(admin, 'course-1');
+      expect(result).toEqual(persisted);
+    });
   });
 
   describe('findAllForCourse', () => {
-    it('resolves the course, checks enrollment, then queries progress scoped to userId and lesson.courseId', async () => {
+    it('checks access, then queries progress scoped to userId and lesson.courseId', async () => {
       const rows = [
         {
           id: 'progress-1',
@@ -188,13 +228,11 @@ describe('ProgressService', () => {
       ];
       prisma.lessonProgress.findMany.mockResolvedValue(rows);
 
-      const result = await service.findAllForCourse('course-1', 'user-1');
+      const result = await service.findAllForCourse('course-1', user);
 
-      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
-      expect(enrollmentsService.findForUserAndCourse).toHaveBeenCalledWith(
-        'user-1',
-        'course-1',
-      );
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(user, 'course-1');
       expect(prisma.lessonProgress.findMany).toHaveBeenCalledWith({
         where: { userId: 'user-1', lesson: { courseId: 'course-1' } },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -202,55 +240,92 @@ describe('ProgressService', () => {
       expect(result).toEqual(rows);
     });
 
-    it('propagates NotFoundException from CoursesService.findOne and never checks enrollment or queries progress', async () => {
-      coursesService.findOne.mockRejectedValue(
+    it('propagates NotFoundException("Course not found") from assertLearnerAccessToCourse and never queries progress', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
         new NotFoundException('Course not found'),
       );
 
       await expect(
-        service.findAllForCourse('missing-course', 'user-1'),
-      ).rejects.toThrow(NotFoundException);
-      expect(enrollmentsService.findForUserAndCourse).not.toHaveBeenCalled();
+        service.findAllForCourse('missing-course', user),
+      ).rejects.toThrow(new NotFoundException('Course not found'));
       expect(prisma.lessonProgress.findMany).not.toHaveBeenCalled();
     });
 
-    it('throws NotFoundException("Enrollment not found") when the caller is not enrolled, and never queries progress', async () => {
-      enrollmentsService.findForUserAndCourse.mockResolvedValue(null);
+    it('propagates NotFoundException("Enrollment not found") from assertLearnerAccessToCourse, and never queries progress', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
+        new NotFoundException('Enrollment not found'),
+      );
 
-      await expect(
-        service.findAllForCourse('course-1', 'user-1'),
-      ).rejects.toThrow(new NotFoundException('Enrollment not found'));
+      await expect(service.findAllForCourse('course-1', user)).rejects.toThrow(
+        new NotFoundException('Enrollment not found'),
+      );
+      expect(prisma.lessonProgress.findMany).not.toHaveBeenCalled();
+    });
+
+    it('propagates ForbiddenException from assertLearnerAccessToCourse when the course is not published', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
+        new ForbiddenException('Course is not currently available'),
+      );
+
+      await expect(service.findAllForCourse('course-1', user)).rejects.toThrow(
+        new ForbiddenException('Course is not currently available'),
+      );
       expect(prisma.lessonProgress.findMany).not.toHaveBeenCalled();
     });
 
     it('returns an empty array without error when the caller has no progress rows yet', async () => {
       prisma.lessonProgress.findMany.mockResolvedValue([]);
 
-      const result = await service.findAllForCourse('course-1', 'user-1');
+      const result = await service.findAllForCourse('course-1', user);
 
+      expect(result).toEqual([]);
+    });
+
+    it('succeeds for an ADMIN caller on a course they are not enrolled in', async () => {
+      const admin: User = { ...user, id: 'admin-1', role: 'ADMIN' };
+      prisma.lessonProgress.findMany.mockResolvedValue([]);
+
+      const result = await service.findAllForCourse('course-1', admin);
+
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(admin, 'course-1');
       expect(result).toEqual([]);
     });
   });
 
   describe('getSummary', () => {
-    it('propagates NotFoundException from CoursesService.findOne and never checks enrollment or counts', async () => {
-      coursesService.findOne.mockRejectedValue(
+    it('propagates NotFoundException("Course not found") from assertLearnerAccessToCourse and never counts', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
         new NotFoundException('Course not found'),
       );
 
-      await expect(
-        service.getSummary('missing-course', 'user-1'),
-      ).rejects.toThrow(new NotFoundException('Course not found'));
-      expect(enrollmentsService.findForUserAndCourse).not.toHaveBeenCalled();
+      await expect(service.getSummary('missing-course', user)).rejects.toThrow(
+        new NotFoundException('Course not found'),
+      );
       expect(prisma.lesson.count).not.toHaveBeenCalled();
       expect(prisma.lessonProgress.count).not.toHaveBeenCalled();
     });
 
-    it('throws NotFoundException("Enrollment not found") when the caller is not enrolled, and never counts', async () => {
-      enrollmentsService.findForUserAndCourse.mockResolvedValue(null);
-
-      await expect(service.getSummary('course-1', 'user-1')).rejects.toThrow(
+    it('propagates NotFoundException("Enrollment not found") from assertLearnerAccessToCourse, and never counts', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
         new NotFoundException('Enrollment not found'),
+      );
+
+      await expect(service.getSummary('course-1', user)).rejects.toThrow(
+        new NotFoundException('Enrollment not found'),
+      );
+      expect(prisma.lesson.count).not.toHaveBeenCalled();
+      expect(prisma.lessonProgress.count).not.toHaveBeenCalled();
+    });
+
+    it('propagates ForbiddenException from assertLearnerAccessToCourse when the course is not published', async () => {
+      enrollmentsService.assertLearnerAccessToCourse.mockRejectedValue(
+        new ForbiddenException('Course is not currently available'),
+      );
+
+      await expect(service.getSummary('course-1', user)).rejects.toThrow(
+        new ForbiddenException('Course is not currently available'),
       );
       expect(prisma.lesson.count).not.toHaveBeenCalled();
       expect(prisma.lessonProgress.count).not.toHaveBeenCalled();
@@ -260,13 +335,11 @@ describe('ProgressService', () => {
       prisma.lesson.count.mockResolvedValue(4);
       prisma.lessonProgress.count.mockResolvedValue(2);
 
-      const result = await service.getSummary('course-1', 'user-1');
+      const result = await service.getSummary('course-1', user);
 
-      expect(coursesService.findOne).toHaveBeenCalledWith('course-1');
-      expect(enrollmentsService.findForUserAndCourse).toHaveBeenCalledWith(
-        'user-1',
-        'course-1',
-      );
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(user, 'course-1');
       expect(prisma.lesson.count).toHaveBeenCalledWith({
         where: { courseId: 'course-1' },
       });
@@ -290,7 +363,7 @@ describe('ProgressService', () => {
       prisma.lesson.count.mockResolvedValue(0);
       prisma.lessonProgress.count.mockResolvedValue(0);
 
-      const result = await service.getSummary('course-1', 'user-1');
+      const result = await service.getSummary('course-1', user);
 
       expect(result).toEqual({
         courseId: 'course-1',
@@ -305,7 +378,7 @@ describe('ProgressService', () => {
       prisma.lesson.count.mockResolvedValue(4);
       prisma.lessonProgress.count.mockResolvedValue(4);
 
-      const result = await service.getSummary('course-1', 'user-1');
+      const result = await service.getSummary('course-1', user);
 
       expect(result).toEqual({
         courseId: 'course-1',
@@ -314,6 +387,19 @@ describe('ProgressService', () => {
         remainingLessons: 0,
         completionPercentage: 100,
       });
+    });
+
+    it('succeeds for an ADMIN caller on a course they are not enrolled in', async () => {
+      const admin: User = { ...user, id: 'admin-1', role: 'ADMIN' };
+      prisma.lesson.count.mockResolvedValue(0);
+      prisma.lessonProgress.count.mockResolvedValue(0);
+
+      const result = await service.getSummary('course-1', admin);
+
+      expect(
+        enrollmentsService.assertLearnerAccessToCourse,
+      ).toHaveBeenCalledWith(admin, 'course-1');
+      expect(result.courseId).toBe('course-1');
     });
   });
 });

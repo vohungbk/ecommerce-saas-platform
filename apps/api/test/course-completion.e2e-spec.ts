@@ -26,10 +26,12 @@ describe('Course completion (e2e)', () => {
   let prisma: PrismaService;
   let userAId: string;
   let userBId: string;
+  let adminId: string;
   const createdCourseIds: string[] = [];
 
   const USER_A_EMAIL = 'completion-e2e-user-a@example.com';
   const USER_B_EMAIL = 'completion-e2e-user-b@example.com';
+  const ADMIN_EMAIL = 'completion-e2e-admin@example.com';
 
   const createCourse = async (
     overrides: {
@@ -95,6 +97,13 @@ describe('Course completion (e2e)', () => {
       create: { email: USER_B_EMAIL, role: 'USER' },
     });
     userBId = userB.id;
+
+    const admin = await prisma.user.upsert({
+      where: { email: ADMIN_EMAIL },
+      update: { role: 'ADMIN' },
+      create: { email: ADMIN_EMAIL, role: 'ADMIN' },
+    });
+    adminId = admin.id;
   });
 
   afterAll(async () => {
@@ -107,7 +116,7 @@ describe('Course completion (e2e)', () => {
       });
     }
     await prisma.user.deleteMany({
-      where: { email: { in: [USER_A_EMAIL, USER_B_EMAIL] } },
+      where: { email: { in: [USER_A_EMAIL, USER_B_EMAIL, ADMIN_EMAIL] } },
     });
     await app.close();
   });
@@ -413,6 +422,46 @@ describe('Course completion (e2e)', () => {
         const response = await request(app.getHttpServer())
           .get(`/courses/${course.id}/completion`)
           .set('x-user-id', userBId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          completed: false,
+          completedAt: null,
+        });
+      });
+    });
+
+    describe('not published', () => {
+      it('returns 403 when the caller is enrolled but the course is DRAFT', async () => {
+        const course = await createCourse({
+          title: 'GET completion e2e - unpublished course',
+          status: 'DRAFT',
+        });
+        await enroll(course.id, userAId);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/completion`)
+          .set('x-user-id', userAId)
+          .expect(403);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.message).toEqual(
+          expect.stringContaining('not currently available'),
+        );
+      });
+    });
+
+    describe('admin access', () => {
+      it('returns 200 for an ADMIN caller on a DRAFT course the admin is not enrolled in', async () => {
+        const course = await createCourse({
+          title: 'GET completion e2e - admin bypass course',
+          status: 'DRAFT',
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/completion`)
+          .set('x-user-id', adminId)
           .expect(200);
 
         expect(response.body).toEqual({

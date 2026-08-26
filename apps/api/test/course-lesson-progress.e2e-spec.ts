@@ -29,10 +29,12 @@ describe('Course lesson progress (e2e)', () => {
   let prisma: PrismaService;
   let userAId: string;
   let userBId: string;
+  let adminId: string;
   const createdCourseIds: string[] = [];
 
   const USER_A_EMAIL = 'progress-e2e-user-a@example.com';
   const USER_B_EMAIL = 'progress-e2e-user-b@example.com';
+  const ADMIN_EMAIL = 'progress-e2e-admin@example.com';
 
   const createCourse = async (
     overrides: {
@@ -86,6 +88,13 @@ describe('Course lesson progress (e2e)', () => {
       create: { email: USER_B_EMAIL, role: 'USER' },
     });
     userBId = userB.id;
+
+    const admin = await prisma.user.upsert({
+      where: { email: ADMIN_EMAIL },
+      update: { role: 'ADMIN' },
+      create: { email: ADMIN_EMAIL, role: 'ADMIN' },
+    });
+    adminId = admin.id;
   });
 
   afterAll(async () => {
@@ -98,7 +107,7 @@ describe('Course lesson progress (e2e)', () => {
       });
     }
     await prisma.user.deleteMany({
-      where: { email: { in: [USER_A_EMAIL, USER_B_EMAIL] } },
+      where: { email: { in: [USER_A_EMAIL, USER_B_EMAIL, ADMIN_EMAIL] } },
     });
     await app.close();
   });
@@ -269,6 +278,66 @@ describe('Course lesson progress (e2e)', () => {
           .set('x-user-id', userAId)
           .send({ completed: true })
           .expect(404);
+      });
+    });
+
+    describe('not published', () => {
+      it('returns 403 when the caller is enrolled but the course is DRAFT, and creates no LessonProgress row', async () => {
+        const course = await createCourse({
+          title: 'PUT progress e2e - unpublished course',
+          status: 'DRAFT',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+        await enroll(course.id, userAId);
+
+        const response = await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson.id}/progress`)
+          .set('x-user-id', userAId)
+          .send({ completed: true })
+          .expect(403);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body).toMatchObject({
+          statusCode: 403,
+          error: expect.any(String) as string,
+          message: expect.stringContaining('not currently available') as string,
+          path: `/courses/${course.id}/lessons/${lesson.id}/progress`,
+          timestamp: expect.any(String) as string,
+        });
+
+        const persisted = await prisma.lessonProgress.findUnique({
+          where: {
+            userId_lessonId: { userId: userAId, lessonId: lesson.id },
+          },
+        });
+        expect(persisted).toBeNull();
+      });
+    });
+
+    describe('admin access', () => {
+      it('returns 200 for an ADMIN caller on a DRAFT course the admin is not enrolled in', async () => {
+        const course = await createCourse({
+          title: 'PUT progress e2e - admin bypass course',
+          status: 'DRAFT',
+        });
+        const lesson = await prisma.lesson.create({
+          data: { courseId: course.id, title: 'Lesson 1' },
+        });
+
+        const response = await request(app.getHttpServer())
+          .put(`/courses/${course.id}/lessons/${lesson.id}/progress`)
+          .set('x-user-id', adminId)
+          .send({ completed: true })
+          .expect(200);
+
+        const body = response.body as LessonProgressResponseBody;
+        expect(body).toMatchObject({
+          userId: adminId,
+          lessonId: lesson.id,
+          completed: true,
+        });
       });
     });
 
@@ -537,6 +606,42 @@ describe('Course lesson progress (e2e)', () => {
       });
     });
 
+    describe('not published', () => {
+      it('returns 403 when the caller is enrolled but the course is DRAFT', async () => {
+        const course = await createCourse({
+          title: 'GET progress e2e - unpublished course',
+          status: 'DRAFT',
+        });
+        await enroll(course.id, userAId);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress`)
+          .set('x-user-id', userAId)
+          .expect(403);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.message).toEqual(
+          expect.stringContaining('not currently available'),
+        );
+      });
+    });
+
+    describe('admin access', () => {
+      it('returns 200 for an ADMIN caller on a DRAFT course the admin is not enrolled in', async () => {
+        const course = await createCourse({
+          title: 'GET progress e2e - admin bypass course',
+          status: 'DRAFT',
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        expect(response.body).toEqual([]);
+      });
+    });
+
     describe('authn failures', () => {
       it('returns 401 with the standard error shape when the x-user-id header is missing', async () => {
         const course = await createCourse();
@@ -779,6 +884,48 @@ describe('Course lesson progress (e2e)', () => {
           totalLessons: 2,
           completedLessons: 0,
           remainingLessons: 2,
+          completionPercentage: 0,
+        });
+      });
+    });
+
+    describe('not published', () => {
+      it('returns 403 when the caller is enrolled but the course is DRAFT', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - unpublished course',
+          status: 'DRAFT',
+        });
+        await enroll(course.id, userAId);
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', userAId)
+          .expect(403);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.message).toEqual(
+          expect.stringContaining('not currently available'),
+        );
+      });
+    });
+
+    describe('admin access', () => {
+      it('returns 200 for an ADMIN caller on a DRAFT course the admin is not enrolled in', async () => {
+        const course = await createCourse({
+          title: 'GET progress summary e2e - admin bypass course',
+          status: 'DRAFT',
+        });
+
+        const response = await request(app.getHttpServer())
+          .get(`/courses/${course.id}/progress/summary`)
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        expect(response.body).toEqual({
+          courseId: course.id,
+          totalLessons: 0,
+          completedLessons: 0,
+          remainingLessons: 0,
           completionPercentage: 0,
         });
       });

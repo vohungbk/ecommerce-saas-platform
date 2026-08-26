@@ -1,5 +1,10 @@
-import { ConflictException, Injectable } from '@nestjs/common';
-import { Enrollment, Prisma } from '@prisma/client';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Course, Enrollment, Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursesService } from '../courses/courses.service';
 
@@ -53,6 +58,40 @@ export class EnrollmentsService {
     return this.prisma.enrollment.findUnique({
       where: { userId_courseId: { userId, courseId } },
     });
+  }
+
+  /**
+   * Centralized "may this user access this course's learning content" check
+   * (enrollment + published-status + admin bypass), used by every
+   * learner-facing progress/completion code path instead of each duplicating
+   * its own findOne + findForUserAndCourse + manual throw.
+   *
+   * Order matters: course exists -> enrolled -> published. A non-enrolled
+   * caller always gets 404 regardless of publish state (no information leak
+   * about a draft course's existence), while an already-enrolled caller
+   * whose course was unpublished after the fact gets a distinguishable 403.
+   * ADMIN callers bypass both the enrollment and published checks.
+   */
+  async assertLearnerAccessToCourse(
+    user: User,
+    courseId: string,
+  ): Promise<Course> {
+    const course = await this.coursesService.findOne(courseId);
+
+    if (user.role === 'ADMIN') {
+      return course;
+    }
+
+    const enrollment = await this.findForUserAndCourse(user.id, courseId);
+    if (!enrollment) {
+      throw new NotFoundException('Enrollment not found');
+    }
+
+    if (course.status !== 'PUBLISHED') {
+      throw new ForbiddenException('Course is not currently available');
+    }
+
+    return course;
   }
 
   findAllForUser(userId: string) {
