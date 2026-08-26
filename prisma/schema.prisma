@@ -17,27 +17,29 @@ enum CourseStatus {
 }
 
 model User {
-  id             String           @id @default(cuid())
-  email          String           @unique
-  role           Role             @default(USER)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  enrollments    Enrollment[]
-  lessonProgress LessonProgress[]
+  id                String             @id @default(cuid())
+  email             String             @unique
+  role              Role               @default(USER)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  enrollments       Enrollment[]
+  lessonProgress    LessonProgress[]
+  courseCompletions CourseCompletion[]
 
   @@map("users")
 }
 
 model Course {
-  id          String       @id @default(cuid())
-  title       String
-  description String?
-  status      CourseStatus @default(DRAFT)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  deletedAt   DateTime?    @map("deleted_at")
-  lessons     Lesson[]
-  enrollments Enrollment[]
+  id                String             @id @default(cuid())
+  title             String
+  description       String?
+  status            CourseStatus       @default(DRAFT)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  deletedAt         DateTime?          @map("deleted_at")
+  lessons           Lesson[]
+  enrollments       Enrollment[]
+  courseCompletions CourseCompletion[]
 
   @@map("courses")
 }
@@ -80,4 +82,16 @@ model LessonProgress {
 
   @@unique([userId, lessonId])
   @@map("lesson_progress")
+}
+
+model CourseCompletion {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  completedAt DateTime @default(now())
+
+  @@unique([userId, courseId])
+  @@map("course_completions")
 }

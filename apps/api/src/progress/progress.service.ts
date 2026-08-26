@@ -4,6 +4,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CoursesService } from '../courses/courses.service';
 import { LessonsService } from '../courses/lessons.service';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
+import {
+  CourseCompletionService,
+  CourseCompletionStatus,
+} from './course-completion.service';
 
 export interface CourseProgressSummary {
   courseId: string;
@@ -20,6 +24,7 @@ export class ProgressService {
     private readonly coursesService: CoursesService,
     private readonly lessonsService: LessonsService,
     private readonly enrollmentsService: EnrollmentsService,
+    private readonly courseCompletionService: CourseCompletionService,
   ) {}
 
   async markOrUpdate(
@@ -40,11 +45,17 @@ export class ProgressService {
       throw new NotFoundException('Enrollment not found');
     }
 
-    return this.prisma.lessonProgress.upsert({
+    const progress = await this.prisma.lessonProgress.upsert({
       where: { userId_lessonId: { userId, lessonId } },
       create: { userId, lessonId, completed },
       update: { completed },
     });
+
+    if (completed) {
+      await this.courseCompletionService.recordIfComplete(courseId, userId);
+    }
+
+    return progress;
   }
 
   async findAllForCourse(
@@ -101,5 +112,12 @@ export class ProgressService {
       remainingLessons,
       completionPercentage,
     };
+  }
+
+  getCompletionStatus(
+    courseId: string,
+    userId: string,
+  ): Promise<CourseCompletionStatus> {
+    return this.courseCompletionService.getStatus(courseId, userId);
   }
 }

@@ -3,6 +3,7 @@ import { CoursesService } from '../courses/courses.service';
 import { LessonsService } from '../courses/lessons.service';
 import { EnrollmentsService } from '../enrollments/enrollments.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CourseCompletionService } from './course-completion.service';
 import { ProgressService } from './progress.service';
 
 describe('ProgressService', () => {
@@ -20,6 +21,7 @@ describe('ProgressService', () => {
   let coursesService: { findOne: jest.Mock };
   let lessonsService: { findOne: jest.Mock };
   let enrollmentsService: { findForUserAndCourse: jest.Mock };
+  let courseCompletionService: { recordIfComplete: jest.Mock };
   let service: ProgressService;
 
   const course = {
@@ -68,11 +70,15 @@ describe('ProgressService', () => {
     enrollmentsService = {
       findForUserAndCourse: jest.fn().mockResolvedValue(enrollment),
     };
+    courseCompletionService = {
+      recordIfComplete: jest.fn().mockResolvedValue(undefined),
+    };
     service = new ProgressService(
       prisma as unknown as PrismaService,
       coursesService as unknown as CoursesService,
       lessonsService as unknown as LessonsService,
       enrollmentsService as unknown as EnrollmentsService,
+      courseCompletionService as unknown as CourseCompletionService,
     );
   });
 
@@ -111,6 +117,39 @@ describe('ProgressService', () => {
       expect(result).toEqual(persisted);
     });
 
+    it('calls courseCompletionService.recordIfComplete when completed is true', async () => {
+      prisma.lessonProgress.upsert.mockResolvedValue({
+        id: 'progress-1',
+        userId: 'user-1',
+        lessonId: 'lesson-1',
+        completed: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await service.markOrUpdate('course-1', 'lesson-1', 'user-1', true);
+
+      expect(courseCompletionService.recordIfComplete).toHaveBeenCalledWith(
+        'course-1',
+        'user-1',
+      );
+    });
+
+    it('does not call courseCompletionService.recordIfComplete when completed is false', async () => {
+      prisma.lessonProgress.upsert.mockResolvedValue({
+        id: 'progress-1',
+        userId: 'user-1',
+        lessonId: 'lesson-1',
+        completed: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await service.markOrUpdate('course-1', 'lesson-1', 'user-1', false);
+
+      expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
+    });
+
     it('propagates NotFoundException from LessonsService.findOne and never checks enrollment or upserts', async () => {
       lessonsService.findOne.mockRejectedValue(
         new NotFoundException('Lesson not found'),
@@ -121,6 +160,7 @@ describe('ProgressService', () => {
       ).rejects.toThrow(NotFoundException);
       expect(enrollmentsService.findForUserAndCourse).not.toHaveBeenCalled();
       expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
+      expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException("Enrollment not found") when the caller is not enrolled, and never upserts', async () => {
@@ -130,6 +170,7 @@ describe('ProgressService', () => {
         service.markOrUpdate('course-1', 'lesson-1', 'user-1', true),
       ).rejects.toThrow(new NotFoundException('Enrollment not found'));
       expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
+      expect(courseCompletionService.recordIfComplete).not.toHaveBeenCalled();
     });
   });
 

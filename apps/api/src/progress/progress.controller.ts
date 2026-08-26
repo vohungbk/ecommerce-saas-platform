@@ -145,4 +145,42 @@ export class ProgressController {
   ) {
     return this.progressService.getSummary(params.courseId, user.id);
   }
+
+  @Get('completion')
+  @UseGuards(AuthGuard)
+  @ApiOperation({
+    summary: "Retrieve the caller's own completion status for a course",
+    description:
+      "Returns the authenticated caller's own course completion status for the given course. The course must exist and the caller must be enrolled in it. Completion is derived only — set as a side effect of PUT .../lessons/:lessonId/progress once every lesson is completed — and is never accepted directly from a client. Once completed, a course stays completed even if a lesson is later un-completed. Requires the caller to be an authenticated user (development-only x-user-id header shim, see AuthGuard) — any role. Never includes another user's completion status.",
+  })
+  @ApiParam({ name: 'courseId', description: 'Course id' })
+  @ApiResponse({
+    status: 200,
+    description: "The caller's completion status for the course",
+    schema: {
+      type: 'object',
+      properties: {
+        courseId: { type: 'string' },
+        completed: { type: 'boolean' },
+        completedAt: {
+          type: 'string',
+          format: 'date-time',
+          nullable: true,
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Validation failed' })
+  @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Course not found, or the caller is not enrolled in this course',
+  })
+  getCompletionStatus(
+    @Param() params: FindCourseLessonsParamsDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.progressService.getCompletionStatus(params.courseId, user.id);
+  }
 }
