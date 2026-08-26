@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import { CoursesModule } from './courses/courses.module';
 import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { HealthModule } from './health/health.module';
+import { MyLearningModule } from './my-learning/my-learning.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProgressModule } from './progress/progress.module';
 
@@ -16,6 +17,7 @@ import { ProgressModule } from './progress/progress.module';
     CoursesModule,
     EnrollmentsModule,
     ProgressModule,
+    MyLearningModule,
   ],
   controllers: [AppController],
   providers: [AppService],
