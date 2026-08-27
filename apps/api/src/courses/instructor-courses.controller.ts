@@ -19,49 +19,54 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CourseStatus } from '@prisma/client';
-import { AdminGuard } from '../auth/admin.guard';
+import type { User } from '@prisma/client';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { InstructorGuard } from '../auth/instructor.guard';
 import { CoursesService } from './courses.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { FindCourseParamsDto } from './dto/find-course-params.dto';
 import { FindCoursesQueryDto } from './dto/find-courses-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
-@ApiTags('courses')
+@ApiTags('instructor-courses')
 @ApiHeader({
   name: 'x-user-id',
   description:
-    'Development-only identity shim: id of an existing admin User. Not production auth.',
+    'Development-only identity shim: id of an existing INSTRUCTOR or ADMIN User. Not production auth.',
   required: true,
 })
-@Controller('courses')
-export class CoursesController {
+@Controller('instructor/courses')
+export class InstructorCoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
   @Post()
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'Create a course (admin only)',
+    summary: 'Create a course owned by the caller (instructor)',
     description:
-      'Creates a new course with status DRAFT. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Creates a new course with status DRAFT, owned by the caller. Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).',
   })
   @ApiResponse({ status: 201, description: 'Course created' })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  create(@Body() dto: CreateCourseDto) {
-    return this.coursesService.create(dto);
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  create(@Body() dto: CreateCourseDto, @CurrentUser() user: User) {
+    return this.coursesService.createOwned(dto, user.id);
   }
 
   @Get()
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'List courses (admin only)',
+    summary: 'List courses owned by the caller (instructor)',
     description:
-      'Returns a paginated list of courses, optionally filtered by status. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      "Returns a paginated list of the caller's own courses, optionally filtered by status. Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).",
   })
   @ApiResponse({
     status: 200,
-    description: 'Paginated list of courses',
+    description: "Paginated list of the caller's own courses",
     schema: {
       type: 'object',
       properties: {
@@ -103,17 +108,20 @@ export class CoursesController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  findAll(@Query() query: FindCoursesQueryDto) {
-    return this.coursesService.findAll(query);
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  findAll(@Query() query: FindCoursesQueryDto, @CurrentUser() user: User) {
+    return this.coursesService.findAllOwned(user.id, query);
   }
 
   @Get(':id')
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'Get a course by id (admin only)',
+    summary: 'Get a course owned by the caller by id (instructor)',
     description:
-      'Returns a single course by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Returns a single course by id, only if owned by the caller (ADMIN bypasses ownership). Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).',
   })
   @ApiParam({ name: 'id', description: 'Course id' })
   @ApiResponse({
@@ -139,18 +147,24 @@ export class CoursesController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  @ApiResponse({ status: 404, description: 'Course not found' })
-  findOne(@Param() params: FindCourseParamsDto) {
-    return this.coursesService.findOne(params.id);
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Course not found, or not owned by the caller',
+  })
+  findOne(@Param() params: FindCourseParamsDto, @CurrentUser() user: User) {
+    return this.coursesService.findOneOwned(params.id, user);
   }
 
   @Patch(':id')
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'Update a course (admin only)',
+    summary: 'Update a course owned by the caller (instructor)',
     description:
-      'Partially updates title and/or description of an existing course by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Partially updates title and/or description of an existing course by id, only if owned by the caller (ADMIN bypasses ownership). Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).',
   })
   @ApiParam({ name: 'id', description: 'Course id' })
   @ApiResponse({
@@ -176,18 +190,28 @@ export class CoursesController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  @ApiResponse({ status: 404, description: 'Course not found' })
-  update(@Param() params: FindCourseParamsDto, @Body() dto: UpdateCourseDto) {
-    return this.coursesService.update(params.id, dto);
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Course not found, or not owned by the caller',
+  })
+  update(
+    @Param() params: FindCourseParamsDto,
+    @Body() dto: UpdateCourseDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.coursesService.updateOwned(params.id, dto, user);
   }
 
   @Delete(':id')
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'Delete a course (admin only)',
+    summary: 'Delete a course owned by the caller (instructor)',
     description:
-      'Soft-deletes a course by id (sets deletedAt, does not remove the row). Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Soft-deletes a course by id (sets deletedAt, does not remove the row), only if owned by the caller (ADMIN bypasses ownership). Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).',
   })
   @ApiParam({ name: 'id', description: 'Course id' })
   @ApiResponse({
@@ -213,19 +237,25 @@ export class CoursesController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  @ApiResponse({ status: 404, description: 'Course not found' })
-  remove(@Param() params: FindCourseParamsDto) {
-    return this.coursesService.remove(params.id);
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Course not found, or not owned by the caller',
+  })
+  remove(@Param() params: FindCourseParamsDto, @CurrentUser() user: User) {
+    return this.coursesService.removeOwned(params.id, user);
   }
 
   @Post(':id/publish')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'Publish a course (admin only)',
+    summary: 'Publish a course owned by the caller (instructor)',
     description:
-      'Transitions a course from DRAFT to PUBLISHED by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Transitions a course from DRAFT to PUBLISHED by id, only if owned by the caller (ADMIN bypasses ownership). Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).',
   })
   @ApiParam({ name: 'id', description: 'Course id' })
   @ApiResponse({
@@ -251,20 +281,26 @@ export class CoursesController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  @ApiResponse({ status: 404, description: 'Course not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Course not found, or not owned by the caller',
+  })
   @ApiResponse({ status: 409, description: 'Course is not in DRAFT status' })
-  publish(@Param() params: FindCourseParamsDto) {
-    return this.coursesService.publish(params.id);
+  publish(@Param() params: FindCourseParamsDto, @CurrentUser() user: User) {
+    return this.coursesService.publishOwned(params.id, user);
   }
 
   @Post(':id/unpublish')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AdminGuard)
+  @UseGuards(InstructorGuard)
   @ApiOperation({
-    summary: 'Unpublish a course (admin only)',
+    summary: 'Unpublish a course owned by the caller (instructor)',
     description:
-      'Transitions a course from PUBLISHED to DRAFT by id. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Transitions a course from PUBLISHED to DRAFT by id, only if owned by the caller (ADMIN bypasses ownership). Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).',
   })
   @ApiParam({ name: 'id', description: 'Course id' })
   @ApiResponse({
@@ -290,13 +326,19 @@ export class CoursesController {
   })
   @ApiResponse({ status: 400, description: 'Validation failed' })
   @ApiResponse({ status: 401, description: 'Missing or unknown x-user-id' })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin' })
-  @ApiResponse({ status: 404, description: 'Course not found' })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an instructor or admin',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Course not found, or not owned by the caller',
+  })
   @ApiResponse({
     status: 409,
     description: 'Course is not in PUBLISHED status',
   })
-  unpublish(@Param() params: FindCourseParamsDto) {
-    return this.coursesService.unpublish(params.id);
+  unpublish(@Param() params: FindCourseParamsDto, @CurrentUser() user: User) {
+    return this.coursesService.unpublishOwned(params.id, user);
   }
 }

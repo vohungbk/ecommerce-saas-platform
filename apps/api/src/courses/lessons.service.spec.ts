@@ -1,4 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { User } from '@prisma/client';
 import { LessonsService } from './lessons.service';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,7 +18,7 @@ describe('LessonsService', () => {
     };
     $transaction: jest.Mock;
   };
-  let coursesService: { findOne: jest.Mock };
+  let coursesService: { findOne: jest.Mock; assertOwnerOrAdmin: jest.Mock };
   let service: LessonsService;
 
   const existingCourse = {
@@ -53,6 +54,7 @@ describe('LessonsService', () => {
     };
     coursesService = {
       findOne: jest.fn().mockResolvedValue(existingCourse),
+      assertOwnerOrAdmin: jest.fn().mockResolvedValue(existingCourse),
     };
     service = new LessonsService(
       prisma as unknown as PrismaService,
@@ -525,6 +527,180 @@ describe('LessonsService', () => {
         NotFoundException,
       );
       expect(prisma.lesson.findMany).not.toHaveBeenCalled();
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('*Owned wrappers call coursesService.assertOwnerOrAdmin before delegating', () => {
+    const owner: User = {
+      id: 'instructor-1',
+      email: 'instructor@example.com',
+      role: 'INSTRUCTOR',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    it('createOwned checks ownership, then creates the lesson when it resolves', async () => {
+      const dto = { title: 'Lesson 1' } as CreateLessonDto;
+
+      await service.createOwned('course-1', dto, owner);
+
+      expect(coursesService.assertOwnerOrAdmin).toHaveBeenCalledWith(
+        owner,
+        'course-1',
+      );
+      expect(prisma.lesson.create).toHaveBeenCalledWith({
+        data: {
+          courseId: 'course-1',
+          title: 'Lesson 1',
+          description: undefined,
+          position: 1,
+        },
+      });
+    });
+
+    it('createOwned rejects and never creates the lesson when assertOwnerOrAdmin rejects', async () => {
+      coursesService.assertOwnerOrAdmin.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+      const dto = { title: 'Lesson 1' } as CreateLessonDto;
+
+      await expect(service.createOwned('course-1', dto, owner)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(prisma.lesson.create).not.toHaveBeenCalled();
+    });
+
+    it('findAllForCourseOwned checks ownership, then lists lessons when it resolves', async () => {
+      const lessons = [{ id: 'lesson-1' }];
+      prisma.lesson.findMany.mockResolvedValue(lessons);
+
+      const result = await service.findAllForCourseOwned('course-1', owner);
+
+      expect(coursesService.assertOwnerOrAdmin).toHaveBeenCalledWith(
+        owner,
+        'course-1',
+      );
+      expect(result).toEqual(lessons);
+    });
+
+    it('findAllForCourseOwned rejects and never queries lessons when assertOwnerOrAdmin rejects', async () => {
+      coursesService.assertOwnerOrAdmin.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+
+      await expect(
+        service.findAllForCourseOwned('course-1', owner),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.findMany).not.toHaveBeenCalled();
+    });
+
+    it('findOneOwned checks ownership, then returns the lesson when it resolves', async () => {
+      const lesson = { id: 'lesson-1', courseId: 'course-1' };
+      prisma.lesson.findFirst.mockResolvedValue(lesson);
+
+      const result = await service.findOneOwned('course-1', 'lesson-1', owner);
+
+      expect(coursesService.assertOwnerOrAdmin).toHaveBeenCalledWith(
+        owner,
+        'course-1',
+      );
+      expect(result).toEqual(lesson);
+    });
+
+    it('findOneOwned rejects and never queries the lesson when assertOwnerOrAdmin rejects', async () => {
+      coursesService.assertOwnerOrAdmin.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+
+      await expect(
+        service.findOneOwned('course-1', 'lesson-1', owner),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('updateOwned checks ownership, then updates the lesson when it resolves', async () => {
+      const existingLesson = { id: 'lesson-1', courseId: 'course-1' };
+      prisma.lesson.findFirst.mockResolvedValue(existingLesson);
+      prisma.lesson.update.mockResolvedValue(existingLesson);
+      const dto = { title: 'New title' } as UpdateLessonDto;
+
+      await service.updateOwned('course-1', 'lesson-1', dto, owner);
+
+      expect(coursesService.assertOwnerOrAdmin).toHaveBeenCalledWith(
+        owner,
+        'course-1',
+      );
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+        data: { title: 'New title' },
+      });
+    });
+
+    it('updateOwned rejects and never updates the lesson when assertOwnerOrAdmin rejects', async () => {
+      coursesService.assertOwnerOrAdmin.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+      const dto = { title: 'New title' } as UpdateLessonDto;
+
+      await expect(
+        service.updateOwned('course-1', 'lesson-1', dto, owner),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.update).not.toHaveBeenCalled();
+    });
+
+    it('removeOwned checks ownership, then deletes the lesson when it resolves', async () => {
+      const existingLesson = { id: 'lesson-1', courseId: 'course-1' };
+      prisma.lesson.findFirst.mockResolvedValue(existingLesson);
+      prisma.lesson.delete.mockResolvedValue(existingLesson);
+
+      await service.removeOwned('course-1', 'lesson-1', owner);
+
+      expect(coursesService.assertOwnerOrAdmin).toHaveBeenCalledWith(
+        owner,
+        'course-1',
+      );
+      expect(prisma.lesson.delete).toHaveBeenCalledWith({
+        where: { id: 'lesson-1' },
+      });
+    });
+
+    it('removeOwned rejects and never deletes the lesson when assertOwnerOrAdmin rejects', async () => {
+      coursesService.assertOwnerOrAdmin.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+
+      await expect(
+        service.removeOwned('course-1', 'lesson-1', owner),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.lesson.delete).not.toHaveBeenCalled();
+    });
+
+    it('reorderOwned checks ownership, then reorders lessons when it resolves', async () => {
+      prisma.lesson.findMany.mockResolvedValue([{ id: 'lesson-a' }]);
+      const dto = { lessons: [{ id: 'lesson-a', position: 1 }] };
+
+      await service.reorderOwned('course-1', dto, owner);
+
+      expect(coursesService.assertOwnerOrAdmin).toHaveBeenCalledWith(
+        owner,
+        'course-1',
+      );
+      expect(prisma.lesson.update).toHaveBeenCalledWith({
+        where: { id: 'lesson-a' },
+        data: { position: 1 },
+      });
+    });
+
+    it('reorderOwned rejects and never reorders lessons when assertOwnerOrAdmin rejects', async () => {
+      coursesService.assertOwnerOrAdmin.mockRejectedValue(
+        new NotFoundException('Course not found'),
+      );
+      const dto = { lessons: [{ id: 'lesson-a', position: 1 }] };
+
+      await expect(
+        service.reorderOwned('course-1', dto, owner),
+      ).rejects.toThrow(NotFoundException);
       expect(prisma.lesson.update).not.toHaveBeenCalled();
     });
   });

@@ -9,6 +9,7 @@ datasource db {
 enum Role {
   USER
   ADMIN
+  INSTRUCTOR
 }
 
 enum CourseStatus {
@@ -25,6 +26,7 @@ model User {
   enrollments       Enrollment[]
   lessonProgress    LessonProgress[]
   courseCompletions CourseCompletion[]
+  ownedCourses      Course[]
 
   @@map("users")
 }
@@ -34,6 +36,8 @@ model Course {
   title             String
   description       String?
   status            CourseStatus       @default(DRAFT)
+  instructorId      String?            @map("instructor_id")
+  instructor        User?              @relation(fields: [instructorId], references: [id], onDelete: SetNull)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   deletedAt         DateTime?          @map("deleted_at")

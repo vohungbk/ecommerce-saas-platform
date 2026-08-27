@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Lesson, Prisma } from '@prisma/client';
+import { Lesson, Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CoursesService } from './courses.service';
 import { CreateLessonDto } from './dto/create-lesson.dto';
@@ -130,5 +130,62 @@ export class LessonsService {
     );
 
     return this.findAllForCourse(courseId);
+  }
+
+  // --- Instructor-owned lesson methods below. Additive only: none of the
+  // admin-facing methods above are modified. Each wrapper checks ownership
+  // via `coursesService.assertOwnerOrAdmin` before delegating to the
+  // corresponding existing method — never trust the client-supplied
+  // courseId alone. See instructor-lessons.controller.ts for the callers. ---
+
+  async createOwned(
+    courseId: string,
+    dto: CreateLessonDto,
+    user: User,
+  ): Promise<Lesson> {
+    await this.coursesService.assertOwnerOrAdmin(user, courseId);
+    return this.create(courseId, dto);
+  }
+
+  async findAllForCourseOwned(courseId: string, user: User): Promise<Lesson[]> {
+    await this.coursesService.assertOwnerOrAdmin(user, courseId);
+    return this.findAllForCourse(courseId);
+  }
+
+  async findOneOwned(
+    courseId: string,
+    lessonId: string,
+    user: User,
+  ): Promise<Lesson> {
+    await this.coursesService.assertOwnerOrAdmin(user, courseId);
+    return this.findOne(courseId, lessonId);
+  }
+
+  async updateOwned(
+    courseId: string,
+    lessonId: string,
+    dto: UpdateLessonDto,
+    user: User,
+  ): Promise<Lesson> {
+    await this.coursesService.assertOwnerOrAdmin(user, courseId);
+    return this.update(courseId, lessonId, dto);
+  }
+
+  async removeOwned(
+    courseId: string,
+    lessonId: string,
+    user: User,
+  ): Promise<Lesson> {
+    await this.coursesService.assertOwnerOrAdmin(user, courseId);
+    return this.remove(courseId, lessonId);
+  }
+
+  async reorderOwned(
+    courseId: string,
+    dto: ReorderLessonsDto,
+    user: User,
+  ): Promise<Lesson[]> {
+    await this.coursesService.assertOwnerOrAdmin(user, courseId);
+    return this.reorder(courseId, dto);
   }
 }

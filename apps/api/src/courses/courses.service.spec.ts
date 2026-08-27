@@ -1,4 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { User } from '@prisma/client';
 import { CoursesService } from './courses.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
@@ -423,6 +424,235 @@ describe('CoursesService', () => {
       await expect(service.unpublish('course-1')).rejects.toThrow(
         ConflictException,
       );
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createOwned', () => {
+    it('sets instructorId to the given ownerId, in addition to the create() defaults', async () => {
+      const dto = { title: 'Intro to TypeScript' } as CreateCourseDto;
+
+      await service.createOwned(dto, 'instructor-1');
+
+      expect(prisma.course.create).toHaveBeenCalledWith({
+        data: {
+          title: 'Intro to TypeScript',
+          description: undefined,
+          status: 'DRAFT',
+          instructorId: 'instructor-1',
+        },
+      });
+    });
+
+    it('trims title and description before persisting', async () => {
+      const dto = {
+        title: '  Intro to TypeScript  ',
+        description: '  A beginner course  ',
+      } as CreateCourseDto;
+
+      await service.createOwned(dto, 'instructor-1');
+
+      expect(prisma.course.create).toHaveBeenCalledWith({
+        data: {
+          title: 'Intro to TypeScript',
+          description: 'A beginner course',
+          status: 'DRAFT',
+          instructorId: 'instructor-1',
+        },
+      });
+    });
+  });
+
+  describe('findAllOwned', () => {
+    it('filters by instructorId in addition to deletedAt: null', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAllOwned('instructor-1', {});
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null, instructorId: 'instructor-1' },
+        skip: 0,
+        take: 10,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      expect(prisma.course.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, instructorId: 'instructor-1' },
+      });
+    });
+
+    it('also applies the status filter and custom pagination when provided', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAllOwned('instructor-1', {
+        status: 'PUBLISHED',
+        page: 2,
+        limit: 5,
+      });
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: null,
+          instructorId: 'instructor-1',
+          status: 'PUBLISHED',
+        },
+        skip: 5,
+        take: 5,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+    });
+  });
+
+  const makeUser = (overrides: Partial<User>): User => ({
+    id: 'user-1',
+    email: 'user@example.com',
+    role: 'USER',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  });
+
+  describe('assertOwnerOrAdmin', () => {
+    const ownedCourse = {
+      id: 'course-1',
+      title: 'Intro to TypeScript',
+      description: null,
+      status: 'DRAFT',
+      instructorId: 'instructor-1',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+
+    it('returns the course when the caller is its owning instructor', async () => {
+      prisma.course.findUnique.mockResolvedValue(ownedCourse);
+      const user = makeUser({ id: 'instructor-1', role: 'INSTRUCTOR' });
+
+      await expect(
+        service.assertOwnerOrAdmin(user, 'course-1'),
+      ).resolves.toEqual(ownedCourse);
+    });
+
+    it('returns the course for an ADMIN caller even when they do not own it', async () => {
+      prisma.course.findUnique.mockResolvedValue(ownedCourse);
+      const user = makeUser({ id: 'someone-else', role: 'ADMIN' });
+
+      await expect(
+        service.assertOwnerOrAdmin(user, 'course-1'),
+      ).resolves.toEqual(ownedCourse);
+    });
+
+    it('throws NotFoundException when the caller is an INSTRUCTOR who does not own the course', async () => {
+      prisma.course.findUnique.mockResolvedValue(ownedCourse);
+      const user = makeUser({ id: 'other-instructor', role: 'INSTRUCTOR' });
+
+      await expect(
+        service.assertOwnerOrAdmin(user, 'course-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException when the course does not exist', async () => {
+      prisma.course.findUnique.mockResolvedValue(null);
+      const user = makeUser({ id: 'instructor-1', role: 'INSTRUCTOR' });
+
+      await expect(
+        service.assertOwnerOrAdmin(user, 'missing-course'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('*Owned wrappers delegate through assertOwnerOrAdmin', () => {
+    const ownedCourse = {
+      id: 'course-1',
+      title: 'Intro to TypeScript',
+      description: null,
+      status: 'DRAFT',
+      instructorId: 'instructor-1',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+    };
+    const owner = makeUser({ id: 'instructor-1', role: 'INSTRUCTOR' });
+    const otherInstructor = makeUser({
+      id: 'other-instructor',
+      role: 'INSTRUCTOR',
+    });
+
+    beforeEach(() => {
+      prisma.course.findUnique.mockResolvedValue(ownedCourse);
+      prisma.course.update.mockResolvedValue(ownedCourse);
+    });
+
+    it('findOneOwned resolves for the owner and rejects for a non-owner', async () => {
+      await expect(service.findOneOwned('course-1', owner)).resolves.toEqual(
+        ownedCourse,
+      );
+
+      await expect(
+        service.findOneOwned('course-1', otherInstructor),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('updateOwned calls prisma.course.update for the owner and rejects for a non-owner without updating', async () => {
+      const dto = { title: 'New Title' } as UpdateCourseDto;
+
+      await service.updateOwned('course-1', dto, owner);
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { title: 'New Title' },
+      });
+
+      prisma.course.update.mockClear();
+      await expect(
+        service.updateOwned('course-1', dto, otherInstructor),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+
+    it('removeOwned calls prisma.course.update (soft-delete) for the owner and rejects for a non-owner without deleting', async () => {
+      await service.removeOwned('course-1', owner);
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { deletedAt: expect.any(Date) as Date },
+      });
+
+      prisma.course.update.mockClear();
+      await expect(
+        service.removeOwned('course-1', otherInstructor),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+
+    it('publishOwned transitions status for the owner and rejects for a non-owner without changing status', async () => {
+      await service.publishOwned('course-1', owner);
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { status: 'PUBLISHED' },
+      });
+
+      prisma.course.update.mockClear();
+      await expect(
+        service.publishOwned('course-1', otherInstructor),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+
+    it('unpublishOwned transitions status for the owner and rejects for a non-owner without changing status', async () => {
+      const publishedOwnedCourse = { ...ownedCourse, status: 'PUBLISHED' };
+      prisma.course.findUnique.mockResolvedValue(publishedOwnedCourse);
+      prisma.course.update.mockResolvedValue(publishedOwnedCourse);
+
+      await service.unpublishOwned('course-1', owner);
+      expect(prisma.course.update).toHaveBeenCalledWith({
+        where: { id: 'course-1' },
+        data: { status: 'DRAFT' },
+      });
+
+      prisma.course.update.mockClear();
+      await expect(
+        service.unpublishOwned('course-1', otherInstructor),
+      ).rejects.toThrow(NotFoundException);
       expect(prisma.course.update).not.toHaveBeenCalled();
     });
   });

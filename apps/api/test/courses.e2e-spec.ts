@@ -11,6 +11,7 @@ interface CourseResponseBody {
   title: string;
   description: string | null;
   status: string;
+  instructorId: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -511,6 +512,7 @@ describe('CoursesController (e2e)', () => {
             'title',
             'description',
             'status',
+            'instructorId',
             'createdAt',
             'updatedAt',
             'deletedAt',
@@ -525,6 +527,7 @@ describe('CoursesController (e2e)', () => {
           title: persisted?.title,
           description: persisted?.description ?? null,
           status: persisted?.status,
+          instructorId: persisted?.instructorId ?? null,
           createdAt: persisted?.createdAt.toISOString(),
           updatedAt: persisted?.updatedAt.toISOString(),
           deletedAt: persisted?.deletedAt ?? null,
