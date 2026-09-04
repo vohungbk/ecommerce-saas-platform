@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { MyLearningModule } from './my-learning/my-learning.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProgressModule } from './progress/progress.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ProgressModule } from './progress/progress.module';
     EnrollmentsModule,
     ProgressModule,
     MyLearningModule,
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
