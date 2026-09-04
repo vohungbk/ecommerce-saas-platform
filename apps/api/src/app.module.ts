@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { CategoriesModule } from './categories/categories.module';
 import { CoursesModule } from './courses/courses.module';
 import { EnrollmentsModule } from './enrollments/enrollments.module';
 import { HealthModule } from './health/health.module';
@@ -15,6 +16,7 @@ import { ProgressModule } from './progress/progress.module';
     HealthModule,
     AuthModule,
     CoursesModule,
+    CategoriesModule,
     EnrollmentsModule,
     ProgressModule,
     MyLearningModule,
