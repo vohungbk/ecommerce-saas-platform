@@ -59,6 +59,7 @@ apps/
       prisma/     # PrismaService / PrismaModule (@Global)
       auth/       # AdminGuard/AuthGuard (dev-only x-user-id shim), CurrentUser decorator
       courses/    # POST /courses (admin-only)
+      categories/ # POST /categories (admin-only), GET /categories (any authenticated user)
       enrollments/ # POST /courses/:courseId/enroll, GET /enrollments (any authenticated user)
       progress/   # PUT /courses/:courseId/lessons/:lessonId/progress, GET /courses/:courseId/progress (any authenticated, enrolled user)
       common/     # cross-cutting Nest pieces (e.g. global exception filter)
