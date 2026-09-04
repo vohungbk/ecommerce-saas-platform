@@ -62,6 +62,7 @@ apps/
       categories/ # POST /categories (admin-only), GET /categories (any authenticated user)
       enrollments/ # POST /courses/:courseId/enroll, GET /enrollments (any authenticated user)
       progress/   # PUT /courses/:courseId/lessons/:lessonId/progress, GET /courses/:courseId/progress (any authenticated, enrolled user)
+      reviews/    # POST/GET/PATCH/DELETE /courses/:courseId/reviews, GET /courses/:courseId/reviews/summary (any authenticated user; create requires enrollment)
       common/     # cross-cutting Nest pieces (e.g. global exception filter)
 packages/         # Shared packages — created only when a genuine cross-app need exists
 prisma/
