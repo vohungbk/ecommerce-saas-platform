@@ -47,6 +47,7 @@ model Course {
   enrollments       Enrollment[]
   courseCompletions CourseCompletion[]
 
+  @@index([categoryId])
   @@map("courses")
 }
 
