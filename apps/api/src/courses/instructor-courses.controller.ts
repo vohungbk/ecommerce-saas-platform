@@ -62,7 +62,7 @@ export class InstructorCoursesController {
   @ApiOperation({
     summary: 'List courses owned by the caller (instructor)',
     description:
-      "Returns a paginated list of the caller's own courses, optionally filtered by status. Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).",
+      "Returns a paginated list of the caller's own courses, optionally filtered by status and/or category. Requires the caller to be an instructor or admin (development-only x-user-id header shim, see InstructorGuard).",
   })
   @ApiResponse({
     status: 200,
@@ -84,6 +84,7 @@ export class InstructorCoursesController {
               },
               status: { type: 'string', enum: Object.values(CourseStatus) },
               instructorId: { type: 'string', nullable: true },
+              categoryId: { type: 'string', nullable: true },
               createdAt: { type: 'string', format: 'date-time' },
               updatedAt: { type: 'string', format: 'date-time' },
               deletedAt: {
@@ -139,6 +140,7 @@ export class InstructorCoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -182,6 +184,7 @@ export class InstructorCoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -229,6 +232,7 @@ export class InstructorCoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -273,6 +277,7 @@ export class InstructorCoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -318,6 +323,7 @@ export class InstructorCoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },

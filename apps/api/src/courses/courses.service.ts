@@ -23,14 +23,48 @@ export interface PaginatedCourses {
 export class CoursesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateCourseDto): Promise<Course> {
-    return this.prisma.course.create({
-      data: {
-        title: dto.title.trim(),
-        description: dto.description?.trim(),
-        status: 'DRAFT',
-      },
+  /**
+   * Verifies a categoryId refers to an existing Category before it is
+   * written to a Course row. Shared by create/createOwned/update so a
+   * client-supplied categoryId that doesn't exist surfaces as a 404
+   * instead of silently failing the FK constraint (or, without this
+   * check, succeeding with a dangling reference if the FK were absent).
+   */
+  private async assertCategoryExists(categoryId: string): Promise<void> {
+    const category = await this.prisma.category.findUnique({
+      where: { id: categoryId },
     });
+    if (!category) {
+      throw new NotFoundException('Category not found');
+    }
+  }
+
+  async create(dto: CreateCourseDto): Promise<Course> {
+    if (dto.categoryId) {
+      await this.assertCategoryExists(dto.categoryId);
+    }
+
+    try {
+      return await this.prisma.course.create({
+        data: {
+          title: dto.title.trim(),
+          description: dto.description?.trim(),
+          status: 'DRAFT',
+          categoryId: dto.categoryId,
+        },
+      });
+    } catch (error) {
+      // Race window between assertCategoryExists above and this create: the
+      // category can be deleted in between (see plan.md 5.2/7). The FK
+      // constraint still catches it here as a P2003 violation.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new NotFoundException('Category not found');
+      }
+      throw error;
+    }
   }
 
   async findAll(query: FindCoursesQueryDto): Promise<PaginatedCourses> {
@@ -39,6 +73,7 @@ export class CoursesService {
     const where: Prisma.CourseWhereInput = {
       deletedAt: null,
       ...(query.status ? { status: query.status } : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     };
 
     const [data, total] = await this.prisma.$transaction([
@@ -77,7 +112,10 @@ export class CoursesService {
   async update(id: string, dto: UpdateCourseDto): Promise<Course> {
     await this.findOne(id);
 
-    const data: Prisma.CourseUpdateInput = {};
+    // Uses the "unchecked" update input (rather than CourseUpdateInput) so
+    // categoryId can be assigned as a plain scalar FK, matching how
+    // instructorId is already assigned as a scalar in createOwned() below.
+    const data: Prisma.CourseUncheckedUpdateInput = {};
     // `null` is treated the same as "field not present": class-validator's
     // `@IsOptional()` skips validation for an explicit `null`, so a
     // strict `!== undefined` check here would let `null` reach `.trim()`
@@ -90,8 +128,25 @@ export class CoursesService {
     if (dto.description != null) {
       data.description = dto.description.trim();
     }
+    if (dto.categoryId != null) {
+      await this.assertCategoryExists(dto.categoryId);
+      data.categoryId = dto.categoryId;
+    }
 
-    return this.prisma.course.update({ where: { id }, data });
+    try {
+      return await this.prisma.course.update({ where: { id }, data });
+    } catch (error) {
+      // Same race-condition guard as create() (see plan.md 5.2/7): the
+      // category can be deleted between assertCategoryExists above and
+      // this update.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new NotFoundException('Category not found');
+      }
+      throw error;
+    }
   }
 
   async remove(id: string): Promise<Course> {
@@ -133,15 +188,31 @@ export class CoursesService {
   // admin-facing methods above are modified. See instructor-courses.controller.ts
   // for the callers and the plan's D1/D2/D3/D4 design decisions. ---
 
-  createOwned(dto: CreateCourseDto, ownerId: string): Promise<Course> {
-    return this.prisma.course.create({
-      data: {
-        title: dto.title.trim(),
-        description: dto.description?.trim(),
-        status: 'DRAFT',
-        instructorId: ownerId,
-      },
-    });
+  async createOwned(dto: CreateCourseDto, ownerId: string): Promise<Course> {
+    if (dto.categoryId) {
+      await this.assertCategoryExists(dto.categoryId);
+    }
+
+    try {
+      return await this.prisma.course.create({
+        data: {
+          title: dto.title.trim(),
+          description: dto.description?.trim(),
+          status: 'DRAFT',
+          instructorId: ownerId,
+          categoryId: dto.categoryId,
+        },
+      });
+    } catch (error) {
+      // Same race-condition guard as create() (see plan.md 5.2/7).
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new NotFoundException('Category not found');
+      }
+      throw error;
+    }
   }
 
   async findAllOwned(
@@ -154,6 +225,7 @@ export class CoursesService {
       deletedAt: null,
       instructorId: ownerId,
       ...(query.status ? { status: query.status } : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
     };
 
     const [data, total] = await this.prisma.$transaction([

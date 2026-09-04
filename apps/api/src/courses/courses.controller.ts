@@ -57,7 +57,7 @@ export class CoursesController {
   @ApiOperation({
     summary: 'List courses (admin only)',
     description:
-      'Returns a paginated list of courses, optionally filtered by status. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
+      'Returns a paginated list of courses, optionally filtered by status and/or category. Requires the caller to be an admin (development-only x-user-id header shim, see AdminGuard).',
   })
   @ApiResponse({
     status: 200,
@@ -79,6 +79,7 @@ export class CoursesController {
               },
               status: { type: 'string', enum: Object.values(CourseStatus) },
               instructorId: { type: 'string', nullable: true },
+              categoryId: { type: 'string', nullable: true },
               createdAt: { type: 'string', format: 'date-time' },
               updatedAt: { type: 'string', format: 'date-time' },
               deletedAt: {
@@ -131,6 +132,7 @@ export class CoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -168,6 +170,7 @@ export class CoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -205,6 +208,7 @@ export class CoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -243,6 +247,7 @@ export class CoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },
@@ -282,6 +287,7 @@ export class CoursesController {
         },
         status: { type: 'string', enum: Object.values(CourseStatus) },
         instructorId: { type: 'string', nullable: true },
+        categoryId: { type: 'string', nullable: true },
         createdAt: { type: 'string', format: 'date-time' },
         updatedAt: { type: 'string', format: 'date-time' },
         deletedAt: { type: 'string', format: 'date-time', nullable: true },

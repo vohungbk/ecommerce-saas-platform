@@ -12,6 +12,7 @@ interface CourseResponseBody {
   description: string | null;
   status: string;
   instructorId: string | null;
+  categoryId: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -43,6 +44,7 @@ describe('InstructorCoursesController (e2e)', () => {
   let adminId: string;
   let userId: string;
   const createdCourseIds: string[] = [];
+  const createdCategoryIds: string[] = [];
 
   const INSTRUCTOR_A_EMAIL = 'instructor-courses-e2e-a@example.com';
   const INSTRUCTOR_B_EMAIL = 'instructor-courses-e2e-b@example.com';
@@ -115,6 +117,11 @@ describe('InstructorCoursesController (e2e)', () => {
     if (createdCourseIds.length > 0) {
       await prisma.course.deleteMany({
         where: { id: { in: createdCourseIds } },
+      });
+    }
+    if (createdCategoryIds.length > 0) {
+      await prisma.category.deleteMany({
+        where: { id: { in: createdCategoryIds } },
       });
     }
     await prisma.user.deleteMany({
@@ -221,6 +228,50 @@ describe('InstructorCoursesController (e2e)', () => {
         expect(afterCount).toBe(beforeCount);
       });
     });
+
+    describe('categoryId', () => {
+      it('creates a course with a valid categoryId, persisted in the response and DB', async () => {
+        const category = await prisma.category.create({
+          data: { name: 'POST /instructor/courses categoryId e2e - valid' },
+        });
+        createdCategoryIds.push(category.id);
+
+        const response = await request(app.getHttpServer())
+          .post('/instructor/courses')
+          .set('x-user-id', instructorAId)
+          .send({ title: 'Course with category', categoryId: category.id })
+          .expect(201);
+
+        const body = response.body as CourseResponseBody;
+        createdCourseIds.push(body.id);
+
+        expect(body.categoryId).toBe(category.id);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: body.id },
+        });
+        expect(persisted?.categoryId).toBe(category.id);
+      });
+
+      it('returns 404 "Category not found" for a non-existent categoryId and creates no course', async () => {
+        const beforeCount = await prisma.course.count();
+
+        const response = await request(app.getHttpServer())
+          .post('/instructor/courses')
+          .set('x-user-id', instructorAId)
+          .send({
+            title: 'Course with bad category',
+            categoryId: 'nonexistent-category-id',
+          })
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(404);
+
+        const afterCount = await prisma.course.count();
+        expect(afterCount).toBe(beforeCount);
+      });
+    });
   });
 
   describe('GET /instructor/courses', () => {
@@ -228,11 +279,18 @@ describe('InstructorCoursesController (e2e)', () => {
     let aCourse2: string;
     let bCourse: string;
     let unownedAdminCourse: string;
+    let sharedCategoryId: string;
 
     beforeAll(async () => {
       await prisma.course.deleteMany({
         where: { instructorId: { not: null } },
       });
+
+      const sharedCategory = await prisma.category.create({
+        data: { name: 'GET /instructor/courses categoryId e2e - shared' },
+      });
+      sharedCategoryId = sharedCategory.id;
+      createdCategoryIds.push(sharedCategoryId);
 
       const a1 = await createOwnedCourse(instructorAId, {
         title: 'GET /instructor/courses - A course 1',
@@ -247,6 +305,18 @@ describe('InstructorCoursesController (e2e)', () => {
       aCourse1 = a1.id;
       aCourse2 = a2.id;
       bCourse = b1.id;
+
+      // Both a2 (instructor A) and b1 (instructor B) share the same category,
+      // so the categoryId filter test below proves ownership scoping still
+      // excludes B's course even though it matches the category.
+      await prisma.course.update({
+        where: { id: aCourse2 },
+        data: { categoryId: sharedCategoryId },
+      });
+      await prisma.course.update({
+        where: { id: bCourse },
+        data: { categoryId: sharedCategoryId },
+      });
 
       const unowned = await prisma.course.create({
         data: { title: 'GET /instructor/courses - admin unowned course' },
@@ -295,6 +365,20 @@ describe('InstructorCoursesController (e2e)', () => {
         const body = response.body as PaginatedCoursesResponseBody;
         expect(body.data.map((c) => c.id)).toEqual([aCourse2]);
       });
+
+      it("filters by categoryId, returning only the caller's own course even when another instructor's course shares the same category", async () => {
+        const response = await request(app.getHttpServer())
+          .get('/instructor/courses')
+          .set('x-user-id', instructorAId)
+          .query({ categoryId: sharedCategoryId, limit: 100 })
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data.map((c) => c.id)).toEqual([aCourse2]);
+        expect(body.data.every((c) => c.instructorId === instructorAId)).toBe(
+          true,
+        );
+      });
     });
 
     describe('authn/authz failures', () => {
@@ -332,6 +416,7 @@ describe('InstructorCoursesController (e2e)', () => {
           description: course.description,
           status: course.status,
           instructorId: instructorAId,
+          categoryId: null,
           createdAt: course.createdAt.toISOString(),
           updatedAt: course.updatedAt.toISOString(),
           deletedAt: null,
@@ -462,6 +547,75 @@ describe('InstructorCoursesController (e2e)', () => {
           where: { id: course.id },
         });
         expect(after).toEqual(before);
+      });
+
+      it("rejects instructor A's attempt to assign a categoryId to instructor B's course, leaving categoryId unchanged", async () => {
+        const category = await prisma.category.create({
+          data: {
+            name: 'PATCH /instructor/courses categoryId e2e - cross-owner',
+          },
+        });
+        createdCategoryIds.push(category.id);
+        const course = await createOwnedCourse(instructorBId, {
+          title: "PATCH /instructor/courses/:id - B's category target",
+        });
+
+        await request(app.getHttpServer())
+          .patch(`/instructor/courses/${course.id}`)
+          .set('x-user-id', instructorAId)
+          .send({ categoryId: category.id })
+          .expect(404);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.categoryId).toBeNull();
+      });
+    });
+
+    describe('categoryId', () => {
+      it('assigns a valid categoryId to a course owned by the caller', async () => {
+        const category = await prisma.category.create({
+          data: { name: 'PATCH /instructor/courses categoryId e2e - valid' },
+        });
+        createdCategoryIds.push(category.id);
+        const course = await createOwnedCourse(instructorAId, {
+          title: 'PATCH /instructor/courses categoryId e2e - assign',
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/instructor/courses/${course.id}`)
+          .set('x-user-id', instructorAId)
+          .send({ categoryId: category.id })
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body.categoryId).toBe(category.id);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.categoryId).toBe(category.id);
+      });
+
+      it('returns 404 "Category not found" for a non-existent categoryId and leaves the course unchanged', async () => {
+        const course = await createOwnedCourse(instructorAId, {
+          title: 'PATCH /instructor/courses categoryId e2e - bad category',
+        });
+
+        const response = await request(app.getHttpServer())
+          .patch(`/instructor/courses/${course.id}`)
+          .set('x-user-id', instructorAId)
+          .send({ categoryId: 'nonexistent-category-id' })
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(404);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.categoryId).toBeNull();
       });
     });
 

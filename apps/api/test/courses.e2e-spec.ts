@@ -12,6 +12,7 @@ interface CourseResponseBody {
   description: string | null;
   status: string;
   instructorId: string | null;
+  categoryId: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -41,6 +42,7 @@ describe('CoursesController (e2e)', () => {
   let adminId: string;
   let nonAdminId: string;
   const createdCourseIds: string[] = [];
+  const createdCategoryIds: string[] = [];
 
   const ADMIN_EMAIL = 'courses-e2e-admin@example.com';
   const NON_ADMIN_EMAIL = 'courses-e2e-user@example.com';
@@ -82,6 +84,11 @@ describe('CoursesController (e2e)', () => {
     if (createdCourseIds.length > 0) {
       await prisma.course.deleteMany({
         where: { id: { in: createdCourseIds } },
+      });
+    }
+    if (createdCategoryIds.length > 0) {
+      await prisma.category.deleteMany({
+        where: { id: { in: createdCategoryIds } },
       });
     }
     await prisma.user.deleteMany({
@@ -252,6 +259,77 @@ describe('CoursesController (e2e)', () => {
     });
   });
 
+  describe('POST /courses - categoryId', () => {
+    const createCategory = async (name: string) => {
+      const category = await prisma.category.create({ data: { name } });
+      createdCategoryIds.push(category.id);
+      return category;
+    };
+
+    it('creates a course with a valid categoryId, persisted in the response and DB', async () => {
+      const category = await createCategory(
+        'POST /courses categoryId e2e - valid',
+      );
+
+      const response = await request(app.getHttpServer())
+        .post('/courses')
+        .set('x-user-id', adminId)
+        .send({ title: 'Course with category', categoryId: category.id })
+        .expect(201);
+
+      const body = response.body as CourseResponseBody;
+      createdCourseIds.push(body.id);
+
+      expect(body.categoryId).toBe(category.id);
+
+      const persisted = await prisma.course.findUnique({
+        where: { id: body.id },
+      });
+      expect(persisted?.categoryId).toBe(category.id);
+    });
+
+    it('creates a course with categoryId null when not provided (unchanged behavior)', async () => {
+      const response = await request(app.getHttpServer())
+        .post('/courses')
+        .set('x-user-id', adminId)
+        .send({ title: 'Course without category' })
+        .expect(201);
+
+      const body = response.body as CourseResponseBody;
+      createdCourseIds.push(body.id);
+
+      expect(body.categoryId).toBeNull();
+    });
+
+    it('returns 404 "Category not found" for a non-existent categoryId and creates no course', async () => {
+      const beforeCount = await prisma.course.count();
+
+      const response = await request(app.getHttpServer())
+        .post('/courses')
+        .set('x-user-id', adminId)
+        .send({
+          title: 'Course with bad category',
+          categoryId: 'nonexistent-category-id',
+        })
+        .expect(404);
+
+      const body = response.body as ErrorResponseBody;
+      expect(body.statusCode).toBe(404);
+      expect(body.message).toContain('Category');
+
+      const afterCount = await prisma.course.count();
+      expect(afterCount).toBe(beforeCount);
+    });
+
+    it('rejects a whitespace-only categoryId with 400', async () => {
+      await request(app.getHttpServer())
+        .post('/courses')
+        .set('x-user-id', adminId)
+        .send({ title: 'Course with whitespace category', categoryId: '   ' })
+        .expect(400);
+    });
+  });
+
   describe('GET /courses', () => {
     let publishedId1: string;
     let publishedId2: string;
@@ -362,6 +440,124 @@ describe('CoursesController (e2e)', () => {
         const body = response.body as PaginatedCoursesResponseBody;
         expect(body.data).toEqual([]);
         expect(body.meta.total).toBe(3);
+      });
+    });
+
+    describe('categoryId filter', () => {
+      let categoryAId: string;
+      let categoryBId: string;
+      let categorizedCourseId: string;
+
+      beforeAll(async () => {
+        const categoryA = await prisma.category.create({
+          data: { name: 'GET /courses categoryId e2e - A' },
+        });
+        const categoryB = await prisma.category.create({
+          data: { name: 'GET /courses categoryId e2e - B' },
+        });
+        categoryAId = categoryA.id;
+        categoryBId = categoryB.id;
+        createdCategoryIds.push(categoryAId, categoryBId);
+
+        const categorized = await prisma.course.create({
+          data: {
+            title: 'GET /courses categoryId e2e - categorized',
+            status: 'PUBLISHED',
+            categoryId: categoryAId,
+          },
+        });
+        categorizedCourseId = categorized.id;
+      });
+
+      afterAll(async () => {
+        await prisma.course.deleteMany({
+          where: { id: categorizedCourseId },
+        });
+      });
+
+      it('returns only courses in the given category', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ categoryId: categoryAId })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data.map((c) => c.id)).toEqual([categorizedCourseId]);
+        expect(body.meta.total).toBe(1);
+      });
+
+      it('returns 200 with an empty list for a categoryId with no courses', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ categoryId: categoryBId })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toEqual([]);
+        expect(body.meta.total).toBe(0);
+      });
+
+      it('returns 200 with an empty list for a categoryId that does not exist at all', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ categoryId: 'nonexistent-category-id' })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data).toEqual([]);
+        expect(body.meta.total).toBe(0);
+      });
+
+      it('combines categoryId with status', async () => {
+        const response = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ categoryId: categoryAId, status: 'PUBLISHED' })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const body = response.body as PaginatedCoursesResponseBody;
+        expect(body.data.map((c) => c.id)).toEqual([categorizedCourseId]);
+
+        const mismatched = await request(app.getHttpServer())
+          .get('/courses')
+          .query({ categoryId: categoryAId, status: 'DRAFT' })
+          .set('x-user-id', adminId)
+          .expect(200);
+
+        const mismatchedBody = mismatched.body as PaginatedCoursesResponseBody;
+        expect(mismatchedBody.data).toEqual([]);
+      });
+
+      it('applies pagination to the categoryId-filtered set (meta.total reflects the filtered count)', async () => {
+        const second = await prisma.course.create({
+          data: {
+            title: 'GET /courses categoryId e2e - categorized 2',
+            status: 'PUBLISHED',
+            categoryId: categoryAId,
+          },
+        });
+
+        try {
+          const response = await request(app.getHttpServer())
+            .get('/courses')
+            .query({ categoryId: categoryAId, page: 2, limit: 1 })
+            .set('x-user-id', adminId)
+            .expect(200);
+
+          const body = response.body as PaginatedCoursesResponseBody;
+          expect(body.data).toHaveLength(1);
+          expect(body.meta).toMatchObject({
+            page: 2,
+            limit: 1,
+            total: 2,
+            totalPages: 2,
+          });
+        } finally {
+          await prisma.course.deleteMany({ where: { id: second.id } });
+        }
       });
     });
 
@@ -513,6 +709,7 @@ describe('CoursesController (e2e)', () => {
             'description',
             'status',
             'instructorId',
+            'categoryId',
             'createdAt',
             'updatedAt',
             'deletedAt',
@@ -528,6 +725,7 @@ describe('CoursesController (e2e)', () => {
           description: persisted?.description ?? null,
           status: persisted?.status,
           instructorId: persisted?.instructorId ?? null,
+          categoryId: persisted?.categoryId ?? null,
           createdAt: persisted?.createdAt.toISOString(),
           updatedAt: persisted?.updatedAt.toISOString(),
           deletedAt: persisted?.deletedAt ?? null,
@@ -666,6 +864,127 @@ describe('CoursesController (e2e)', () => {
         });
         expect(persisted?.title).toBe(before?.title);
         expect(persisted?.description).toBe('A new description');
+      });
+    });
+
+    describe('categoryId', () => {
+      const createCategory = async (name: string) => {
+        const category = await prisma.category.create({ data: { name } });
+        createdCategoryIds.push(category.id);
+        return category;
+      };
+
+      it('assigns a categoryId to a course that previously had none', async () => {
+        const course = await prisma.course.create({
+          data: { title: 'PATCH categoryId e2e - no category yet' },
+        });
+        createdCourseIds.push(course.id);
+        const category = await createCategory('PATCH categoryId e2e - assign');
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .send({ categoryId: category.id })
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body.categoryId).toBe(category.id);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.categoryId).toBe(category.id);
+      });
+
+      it('changes an already-assigned categoryId to a different valid category', async () => {
+        const originalCategory = await createCategory(
+          'PATCH categoryId e2e - original',
+        );
+        const newCategory = await createCategory('PATCH categoryId e2e - new');
+        const course = await prisma.course.create({
+          data: {
+            title: 'PATCH categoryId e2e - change category',
+            categoryId: originalCategory.id,
+          },
+        });
+        createdCourseIds.push(course.id);
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .send({ categoryId: newCategory.id })
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body.categoryId).toBe(newCategory.id);
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.categoryId).toBe(newCategory.id);
+      });
+
+      it('returns 404 "Category not found" for a non-existent categoryId and leaves the course categoryId unchanged', async () => {
+        const category = await createCategory(
+          'PATCH categoryId e2e - unchanged',
+        );
+        const course = await prisma.course.create({
+          data: {
+            title: 'PATCH categoryId e2e - bad category',
+            categoryId: category.id,
+          },
+        });
+        createdCourseIds.push(course.id);
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .send({ categoryId: 'nonexistent-category-id' })
+          .expect(404);
+
+        const body = response.body as ErrorResponseBody;
+        expect(body.statusCode).toBe(404);
+        expect(body.message).toContain('Category');
+
+        const persisted = await prisma.course.findUnique({
+          where: { id: course.id },
+        });
+        expect(persisted?.categoryId).toBe(category.id);
+      });
+
+      it('leaves categoryId unchanged when not sent in the PATCH body', async () => {
+        const category = await createCategory(
+          'PATCH categoryId e2e - not sent',
+        );
+        const course = await prisma.course.create({
+          data: {
+            title: 'PATCH categoryId e2e - unrelated update',
+            categoryId: category.id,
+          },
+        });
+        createdCourseIds.push(course.id);
+
+        const response = await request(app.getHttpServer())
+          .patch(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .send({ title: 'Updated title only' })
+          .expect(200);
+
+        const body = response.body as CourseResponseBody;
+        expect(body.categoryId).toBe(category.id);
+      });
+
+      it('rejects a whitespace-only categoryId with 400', async () => {
+        const course = await prisma.course.create({
+          data: { title: 'PATCH categoryId e2e - whitespace' },
+        });
+        createdCourseIds.push(course.id);
+
+        await request(app.getHttpServer())
+          .patch(`/courses/${course.id}`)
+          .set('x-user-id', adminId)
+          .send({ categoryId: '   ' })
+          .expect(400);
       });
     });
 

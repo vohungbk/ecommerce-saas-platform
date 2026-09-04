@@ -14,6 +14,9 @@ describe('CoursesService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    category: {
+      findUnique: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
   let service: CoursesService;
@@ -26,6 +29,9 @@ describe('CoursesService', () => {
         count: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
+      },
+      category: {
+        findUnique: jest.fn(),
       },
       $transaction: jest.fn(
         (ops: unknown[]) => Promise.all(ops) as Promise<unknown>,
@@ -72,6 +78,62 @@ describe('CoursesService', () => {
         description: undefined,
         status: 'DRAFT',
       },
+    });
+  });
+
+  describe('create with categoryId', () => {
+    it('validates the category exists, then persists categoryId, when a valid categoryId is given', async () => {
+      prisma.category.findUnique.mockResolvedValue({
+        id: 'category-1',
+        name: 'Web Development',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      const dto = {
+        title: 'Intro to TypeScript',
+        categoryId: 'category-1',
+      } as CreateCourseDto;
+
+      await service.create(dto);
+
+      expect(prisma.category.findUnique).toHaveBeenCalledWith({
+        where: { id: 'category-1' },
+      });
+      expect(prisma.course.create).toHaveBeenCalledWith({
+        data: {
+          title: 'Intro to TypeScript',
+          description: undefined,
+          status: 'DRAFT',
+          categoryId: 'category-1',
+        },
+      });
+    });
+
+    it('throws NotFoundException and never calls prisma.course.create when the categoryId does not exist', async () => {
+      prisma.category.findUnique.mockResolvedValue(null);
+      const dto = {
+        title: 'Intro to TypeScript',
+        categoryId: 'missing-category',
+      } as CreateCourseDto;
+
+      await expect(service.create(dto)).rejects.toThrow(NotFoundException);
+      expect(prisma.course.create).not.toHaveBeenCalled();
+    });
+
+    it('never checks the category and persists categoryId as undefined when no categoryId is provided', async () => {
+      const dto = { title: 'Intro to TypeScript' } as CreateCourseDto;
+
+      await service.create(dto);
+
+      expect(prisma.category.findUnique).not.toHaveBeenCalled();
+      expect(prisma.course.create).toHaveBeenCalledWith({
+        data: {
+          title: 'Intro to TypeScript',
+          description: undefined,
+          status: 'DRAFT',
+          categoryId: undefined,
+        },
+      });
     });
   });
 
@@ -143,6 +205,53 @@ describe('CoursesService', () => {
       >;
       expect(calls[0][0].where?.deletedAt).toBeNull();
       expect(calls[0][0].where?.status).toBeUndefined();
+    });
+
+    it('filters by categoryId when provided', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAll({ categoryId: 'category-1' });
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null, categoryId: 'category-1' },
+        skip: 0,
+        take: 10,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+      expect(prisma.course.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, categoryId: 'category-1' },
+      });
+    });
+
+    it('combines the status and categoryId filters when both are provided', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAll({ status: 'PUBLISHED', categoryId: 'category-1' });
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: null,
+          status: 'PUBLISHED',
+          categoryId: 'category-1',
+        },
+        skip: 0,
+        take: 10,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+    });
+
+    it('does not filter by categoryId when it is not provided (unchanged behavior)', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAll({});
+
+      const calls = prisma.course.findMany.mock.calls as Array<
+        [{ where?: { categoryId?: unknown } }]
+      >;
+      expect(calls[0][0].where?.categoryId).toBeUndefined();
     });
 
     it('returns an empty data array without error when there are no matches', async () => {
@@ -296,6 +405,63 @@ describe('CoursesService', () => {
         NotFoundException,
       );
       expect(prisma.course.update).not.toHaveBeenCalled();
+    });
+
+    describe('categoryId', () => {
+      it('validates the category exists, then persists categoryId, when a valid categoryId is given', async () => {
+        prisma.category.findUnique.mockResolvedValue({
+          id: 'category-1',
+          name: 'Web Development',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const dto = { categoryId: 'category-1' } as UpdateCourseDto;
+
+        await service.update('course-1', dto);
+
+        expect(prisma.category.findUnique).toHaveBeenCalledWith({
+          where: { id: 'category-1' },
+        });
+        expect(prisma.course.update).toHaveBeenCalledWith({
+          where: { id: 'course-1' },
+          data: { categoryId: 'category-1' },
+        });
+      });
+
+      it('throws NotFoundException and never calls prisma.course.update when the categoryId does not exist', async () => {
+        prisma.category.findUnique.mockResolvedValue(null);
+        const dto = { categoryId: 'missing-category' } as UpdateCourseDto;
+
+        await expect(service.update('course-1', dto)).rejects.toThrow(
+          NotFoundException,
+        );
+        expect(prisma.course.update).not.toHaveBeenCalled();
+      });
+
+      it('never checks the category and leaves categoryId untouched when it is not provided', async () => {
+        const dto = { title: 'New Title' } as UpdateCourseDto;
+
+        await service.update('course-1', dto);
+
+        expect(prisma.category.findUnique).not.toHaveBeenCalled();
+        expect(prisma.course.update).toHaveBeenCalledWith({
+          where: { id: 'course-1' },
+          data: { title: 'New Title' },
+        });
+      });
+
+      it('treats an explicit null categoryId as "not provided" without crashing', async () => {
+        const dto = { categoryId: null } as unknown as UpdateCourseDto;
+
+        await expect(service.update('course-1', dto)).resolves.toEqual(
+          existingCourse,
+        );
+        expect(prisma.category.findUnique).not.toHaveBeenCalled();
+        expect(prisma.course.update).toHaveBeenCalledWith({
+          where: { id: 'course-1' },
+          data: {},
+        });
+      });
     });
   });
 
@@ -461,6 +627,57 @@ describe('CoursesService', () => {
         },
       });
     });
+
+    describe('categoryId', () => {
+      it('validates the category exists, then persists categoryId, when a valid categoryId is given', async () => {
+        prisma.category.findUnique.mockResolvedValue({
+          id: 'category-1',
+          name: 'Web Development',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        const dto = {
+          title: 'Intro to TypeScript',
+          categoryId: 'category-1',
+        } as CreateCourseDto;
+
+        await service.createOwned(dto, 'instructor-1');
+
+        expect(prisma.category.findUnique).toHaveBeenCalledWith({
+          where: { id: 'category-1' },
+        });
+        expect(prisma.course.create).toHaveBeenCalledWith({
+          data: {
+            title: 'Intro to TypeScript',
+            description: undefined,
+            status: 'DRAFT',
+            instructorId: 'instructor-1',
+            categoryId: 'category-1',
+          },
+        });
+      });
+
+      it('throws NotFoundException and never calls prisma.course.create when the categoryId does not exist', async () => {
+        prisma.category.findUnique.mockResolvedValue(null);
+        const dto = {
+          title: 'Intro to TypeScript',
+          categoryId: 'missing-category',
+        } as CreateCourseDto;
+
+        await expect(service.createOwned(dto, 'instructor-1')).rejects.toThrow(
+          NotFoundException,
+        );
+        expect(prisma.course.create).not.toHaveBeenCalled();
+      });
+
+      it('never checks the category when no categoryId is provided', async () => {
+        const dto = { title: 'Intro to TypeScript' } as CreateCourseDto;
+
+        await service.createOwned(dto, 'instructor-1');
+
+        expect(prisma.category.findUnique).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('findAllOwned', () => {
@@ -499,6 +716,24 @@ describe('CoursesService', () => {
         },
         skip: 5,
         take: 5,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      });
+    });
+
+    it('filters by categoryId in addition to instructorId', async () => {
+      prisma.course.findMany.mockResolvedValue([]);
+      prisma.course.count.mockResolvedValue(0);
+
+      await service.findAllOwned('instructor-1', { categoryId: 'category-1' });
+
+      expect(prisma.course.findMany).toHaveBeenCalledWith({
+        where: {
+          deletedAt: null,
+          instructorId: 'instructor-1',
+          categoryId: 'category-1',
+        },
+        skip: 0,
+        take: 10,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       });
     });
