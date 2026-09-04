@@ -27,6 +27,7 @@ model User {
   lessonProgress    LessonProgress[]
   courseCompletions CourseCompletion[]
   ownedCourses      Course[]
+  reviews           Review[]
 
   @@map("users")
 }
@@ -46,6 +47,7 @@ model Course {
   lessons           Lesson[]
   enrollments       Enrollment[]
   courseCompletions CourseCompletion[]
+  reviews           Review[]
 
   @@index([categoryId])
   @@map("courses")
@@ -111,4 +113,20 @@ model CourseCompletion {
 
   @@unique([userId, courseId])
   @@map("course_completions")
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId  String
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  rating    Int
+  content   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, courseId])
+  @@index([courseId])
+  @@map("reviews")
 }
