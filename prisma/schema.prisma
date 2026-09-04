@@ -38,6 +38,8 @@ model Course {
   status            CourseStatus       @default(DRAFT)
   instructorId      String?            @map("instructor_id")
   instructor        User?              @relation(fields: [instructorId], references: [id], onDelete: SetNull)
+  categoryId        String?            @map("category_id")
+  category          Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   deletedAt         DateTime?          @map("deleted_at")
@@ -46,6 +48,16 @@ model Course {
   courseCompletions CourseCompletion[]
 
   @@map("courses")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  courses   Course[]
+
+  @@map("categories")
 }
 
 model Lesson {
